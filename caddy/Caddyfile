@@ -1,0 +1,17 @@
+{
+    log default {
+        output stdout
+        format json
+        include http.log.access
+    }
+
+    http_port 80
+    https_port 443
+}
+
+:80 {
+    redir https://{host}{uri} permanent
+}
+
+import default.d/*
+import conf.d/*

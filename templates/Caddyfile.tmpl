@@ -1,0 +1,60 @@
+{{ range $index, $container := $ }}
+  {{ $name := $container.Name }}
+  {{ range $label, $val := $container.Labels }}
+    {{ if not (hasPrefix "caddy." $label) }} {{ continue }} {{ end }}
+
+    {{ $suffix := trimPrefix "caddy." $label }}
+
+    {{ if not (hasSuffix ".domain" $suffix) }} {{ continue }} {{ end }}
+
+    {{ $idx := trimSuffix ".domain" $suffix }}
+    {{ $domain := $val }}
+    {{ $base := print "caddy." $idx "." }}
+
+    {{ $port := index $container.Labels (print $base "port") | default "80" }}
+    {{ $tls := index $container.Labels (print $base "tls") }}
+    {{ $rewrite := index $container.Labels (print $base "rewrite") }}
+
+    {{ $paths := index $container.Labels (print $base "paths") }}
+
+{{ $domain }} {
+    log {
+        output stdout
+    }
+    encode br gzip zstd
+    {{ if $tls}}tls {{ $tls }}{{ end }}
+    {{ if $rewrite }}rewrite {{ $rewrite }}{{ end }}
+
+    {{ if $paths }}
+      {{ range $index, $pair := split $paths "," }}
+        {{ $parts := split $pair ":" }}
+        {{ $path := index $parts 0 }}
+        {{ $path_port := index $parts 1 }}
+    @{{ $path }} path /{{ $path }}/* /{{ $path }}
+    reverse_proxy @{{ $path }} {{ $name }}:{{ $path_port }}
+
+      {{ end }}
+    @defa path /* /
+    reverse_proxy @defa {{ $name }}:{{ $port }}
+
+    {{ else }}
+    reverse_proxy {{ $name }}:{{ $port }}
+    {{ end }}
+}
+
+  {{ end }}
+{{ end }}
+
+{{ $fallback := env "FALLBACK_PROXY" }}
+{{ $sshHost := env "SSH_HOST" }}
+{{ if $fallback }}
+  {{ if $sshHost }}
+:8443 {
+    reverse_proxy {{ $fallback }}
+}
+  {{ else }}
+:443 {
+    reverse_proxy {{ $fallback }}
+}
+  {{ end }}
+{{ end }}
