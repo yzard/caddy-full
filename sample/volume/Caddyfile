@@ -14,8 +14,7 @@
             route @tls {
                 proxy 127.0.0.1:8443
             }
-            @ssh ssh
-            route @ssh {
+            route {
                 proxy whoami:22
             }
         }
