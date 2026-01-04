@@ -77,7 +77,9 @@ echo "first execution success"
 
 # Execute passed command:
 if [ -n "${PUID:-}" ] || [ -n "${PGID:-}" ]; then
-    exec su-exec "${PUID:-1000}:${PGID:-1000}" "$@"
+    if [ "${PUID:-1000}" -ne 0 ] || [ "${PGID:-1000}" -ne 0 ]; then
+        exec su-exec caddy "$@"
+    fi
 fi
 
 exec "$@"
