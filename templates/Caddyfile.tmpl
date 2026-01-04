@@ -46,15 +46,8 @@
 {{ end }}
 
 {{ $fallback := env "FALLBACK_PROXY" }}
-{{ $sshHost := env "SSH_HOST" }}
 {{ if $fallback }}
-  {{ if $sshHost }}
-:8443 {
-    reverse_proxy {{ $fallback }}
-}
-  {{ else }}
 :443 {
     reverse_proxy {{ $fallback }}
 }
-  {{ end }}
 {{ end }}

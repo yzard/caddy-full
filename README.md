@@ -1,7 +1,6 @@
 # Caddy Full (docker-gen + conf.d)
 
 This is caddy docker with capability of:
-- share both ssh and https traffic in same port (use layer4)
 - reverse proxy with docker-gen support
 - fallback proxy
 
@@ -26,7 +25,6 @@ It gives you a drop-in Caddy reverse proxy that:
 
 - `FALLBACK_PROXY`: catch-all upstream (e.g. `fallback:8080`) for requests
   that do not match any generated site (HTTPS only; HTTP always redirects)
-- `SSH_HOST`: optional SSH target for port 443 passthrough (e.g. `ssh:22`)
 - `PUID`/`PGID`: run the container as this user/group (e.g. `1000`/`1000`)
 - `UMASK`: file creation mask (e.g. `022`)
 - `TZ`: timezone (e.g. `UTC` or `America/Los_Angeles`)
@@ -51,13 +49,6 @@ PUID=1000 PGID=1000 UMASK=022 TZ=UTC \
 The proxy expects a Docker socket mounted read-only at `/tmp/docker.sock` and
 persists state under `/etc/caddy` (see `./sample/volume` in the compose file).
 
-Optional SSH passthrough:
-
-```bash
-SSH_HOST=ssh.example.com:22 \
-  docker-compose -f sample/docker-compose.yml up --build
-```
-
 ## Docker Compose example
 
 Minimal reverse proxy setup:
@@ -69,7 +60,6 @@ services:
     restart: unless-stopped
     environment:
       FALLBACK_PROXY: fallback:8080
-      SSH_HOST: ssh.example.com:22
       PUID: 1000
       PGID: 1000
       UMASK: "022"

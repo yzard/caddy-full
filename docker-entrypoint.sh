@@ -52,22 +52,7 @@ if [ -n "${PUID:-}" ] || [ -n "${PGID:-}" ]; then
     chown -R "${PUID}:${PGID}" /etc/caddy /data 2>/dev/null || true
 fi
 
-if [ -n "${SSH_HOST:-}" ]; then
-    SSH_BLOCK_FILE="/tmp/ssh_block.caddy"
-    cat <<EOF > "${SSH_BLOCK_FILE}"
-            route {
-                proxy ${SSH_HOST} {
-                    proxy_protocol off
-                }
-            }
-EOF
-    sed "/{{SSH_BLOCK}}/{
-        r ${SSH_BLOCK_FILE}
-        d
-    }" /code/caddy/Caddyfile.ssh > /etc/caddy/Caddyfile
-else
-    cp /code/caddy/Caddyfile /etc/caddy/Caddyfile
-fi
+cp /code/caddy/Caddyfile /etc/caddy/Caddyfile
 
 mkdir -p /etc/caddy/conf.d
 
