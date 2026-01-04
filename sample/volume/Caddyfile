@@ -10,13 +10,12 @@
 
     layer4 {
         :443 {
-            @ssh ssh
-            route @ssh {
-                proxy whoami:22
-            }
             @tls tls
             route @tls {
                 proxy 127.0.0.1:8443
+            }
+            route {
+                proxy whoami:22
             }
         }
     }
