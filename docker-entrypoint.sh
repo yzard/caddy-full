@@ -13,23 +13,43 @@ if [ -n "${UMASK:-}" ]; then
     umask "${UMASK}"
 fi
 
+# Ensure Caddy data dir exists for storage (certs, etc.).
+mkdir -p /data
+
 # Create initial configuration:
 mkdir -p /etc/caddy
 if [ -n "${PUID:-}" ] || [ -n "${PGID:-}" ]; then
     PUID="${PUID:-1000}"
     PGID="${PGID:-1000}"
 
-    group_name="$(awk -F: -v gid="${PGID}" '$3==gid{print $1}' /etc/group)"
-    if [ -z "${group_name}" ]; then
-        addgroup -g "${PGID}" caddy
-        group_name="caddy"
+    if [ "${PUID}" -ne 0 ] || [ "${PGID}" -ne 0 ]; then
+        if [ -S /tmp/docker.sock ]; then
+            DOCKER_GID="$(stat -c '%g' /tmp/docker.sock)"
+            if ! awk -F: -v gid="${DOCKER_GID}" '$3==gid{found=1} END{exit !found}' /etc/group; then
+                addgroup -g "${DOCKER_GID}" docker
+            fi
+        fi
+
+        group_name="$(awk -F: -v gid="${PGID}" '$3==gid{print $1}' /etc/group)"
+        if [ -z "${group_name}" ]; then
+            addgroup -g "${PGID}" caddy
+            group_name="caddy"
+        fi
+
+        if ! grep -q '^caddy:' /etc/passwd; then
+            adduser -D -H -u "${PUID}" -G "${group_name}" caddy
+        fi
+
+        if [ -S /tmp/docker.sock ]; then
+            DOCKER_GID="$(stat -c '%g' /tmp/docker.sock)"
+            docker_group="$(awk -F: -v gid="${DOCKER_GID}" '$3==gid{print $1}' /etc/group)"
+            if [ -n "${docker_group}" ]; then
+                addgroup caddy "${docker_group}"
+            fi
+        fi
     fi
 
-    if ! grep -q '^caddy:' /etc/passwd; then
-        adduser -D -H -u "${PUID}" -G "${group_name}" caddy
-    fi
-
-    chown -R "${PUID}:${PGID}" /etc/caddy 2>/dev/null || true
+    chown -R "${PUID}:${PGID}" /etc/caddy /data 2>/dev/null || true
 fi
 
 if [ -n "${SSH_HOST:-}" ]; then
@@ -37,7 +57,7 @@ if [ -n "${SSH_HOST:-}" ]; then
     cat <<EOF > "${SSH_BLOCK_FILE}"
             @ssh ssh
             route @ssh {
-                proxy {to ${SSH_HOST}}
+                proxy ${SSH_HOST}
             }
 EOF
     sed "/{{SSH_BLOCK}}/{

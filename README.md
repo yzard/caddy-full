@@ -1,4 +1,4 @@
-# Caddy 2 Gen (docker-gen + conf.d)
+# Caddy Full (docker-gen + conf.d)
 
 This is caddy docker with capability of:
 - share both ssh and https traffic in same port (use layer4)
@@ -30,6 +30,8 @@ It gives you a drop-in Caddy reverse proxy that:
 - `PUID`/`PGID`: run the container as this user/group (e.g. `1000`/`1000`)
 - `UMASK`: file creation mask (e.g. `022`)
 - `TZ`: timezone (e.g. `UTC` or `America/Los_Angeles`)
+- `PUID`/`PGID` + Docker socket: if you run as non-root, the entrypoint adds
+  the user to the docker socket group (from `/tmp/docker.sock`) for docker-gen.
 
 ## Quick start (demo stack)
 
@@ -54,6 +56,36 @@ Optional SSH passthrough:
 ```bash
 SSH_HOST=ssh.example.com:22 \
   docker-compose -f sample/docker-compose.yml up --build
+```
+
+## Docker Compose example
+
+Minimal reverse proxy setup:
+
+```yaml
+services:
+  caddy-full:
+    image: ghcr.io/zhuoyin/caddy-full:latest
+    restart: unless-stopped
+    environment:
+      FALLBACK_PROXY: fallback:8080
+      SSH_HOST: ssh.example.com:22
+      PUID: 1000
+      PGID: 1000
+      UMASK: "022"
+      TZ: UTC
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./caddy-data:/etc/caddy
+    ports:
+      - "80:80"
+      - "443:443"
+
+  app:
+    image: ghcr.io/your-org/your-app:latest
+    labels:
+      caddy.0.domain: app.example.com
+      caddy.0.port: 8080
 ```
 
 ## Label reference
