@@ -57,7 +57,7 @@ if [ -n "${SSH_HOST:-}" ]; then
     cat <<EOF > "${SSH_BLOCK_FILE}"
             route {
                 proxy {
-                    upstreams ${SSH_HOST}
+                    proxy ${SSH_HOST}
                     proxy_protocol off
                 }
             }

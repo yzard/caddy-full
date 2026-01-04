@@ -16,7 +16,7 @@
             }
             route {
                 proxy {
-                    upstreams whoami:22
+                    proxy whoami:22
                     proxy_protocol off
                 }
             }
