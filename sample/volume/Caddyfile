@@ -15,8 +15,7 @@
                 proxy 127.0.0.1:8443
             }
             route {
-                proxy {
-                    proxy whoami:22
+                proxy whoami:22 {
                     proxy_protocol off
                 }
             }

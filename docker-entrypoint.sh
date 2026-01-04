@@ -56,8 +56,7 @@ if [ -n "${SSH_HOST:-}" ]; then
     SSH_BLOCK_FILE="/tmp/ssh_block.caddy"
     cat <<EOF > "${SSH_BLOCK_FILE}"
             route {
-                proxy {
-                    proxy ${SSH_HOST}
+                proxy ${SSH_HOST} {
                     proxy_protocol off
                 }
             }
