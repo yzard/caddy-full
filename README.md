@@ -18,7 +18,7 @@ The demo uses `test1.localhost`, `test2.localhost`, and `test3.localhost`. Its c
 
 A receives public HTTPS traffic. It handles its local domains and forwards other TLS connections to B. B handles its local domains without forwarding back to A.
 
-Both machines use `zhuoyin/caddy-full:latest` from Docker Hub. Neither machine needs the source repository or a local build. The following examples include the proxy and a sample Nginx application on each machine.
+Both machines use `ghcr.io/yzard/caddy-full:latest` from GitHub Container Registry (GHCR). Neither machine needs the source repository or a local build. The following examples include the proxy and a sample Nginx application on each machine.
 
 ```text
 https://a.example.com -> A:443 -> rp1's internal HTTPS listener -> app-a:80
@@ -43,7 +43,7 @@ Save this file as `compose.yaml` in a deployment directory on A. Replace `192.16
 ```yaml
 services:
   rp1:
-    image: zhuoyin/caddy-full:latest
+    image: ghcr.io/yzard/caddy-full:latest
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -86,7 +86,7 @@ Save this file as `compose.yaml` in a deployment directory on B. Replace the dom
 ```yaml
 services:
   rp2:
-    image: zhuoyin/caddy-full:latest
+    image: ghcr.io/yzard/caddy-full:latest
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -128,7 +128,9 @@ On each machine, run this command beside its `compose.yaml`:
 docker compose up -d
 ```
 
-`pull_policy: always` makes Compose pull the current proxy image when this command runs. Run the same command again to apply a newer image. Certificate and configuration directories remain mounted across container recreation.
+After each push to `main`, a successful GitHub Actions build and test run publishes the new GHCR `latest` image. Running containers do not update automatically.
+
+`pull_policy: always` makes Compose pull the current proxy image when this command runs. After publication, run the same command on A and B to apply the newer image. Certificate and configuration directories remain mounted across container recreation.
 
 On A, read the proxy logs:
 
@@ -213,7 +215,13 @@ docker compose exec rp1 caddy reload --config /etc/caddy/Caddyfile --adapter cad
 
 Replace `rp1` with the proxy service name in your Compose file. On A, also list snippet domains in `LOCAL_DOMAINS`, then recreate the proxy after changing that variable.
 
-Persist both `/etc/caddy` and `/data`. Certificates, account keys, and local certificate authorities live under `/data/caddy`. An `/etc/caddy` mount alone does not preserve certificates. Keep an existing `/data` volume when upgrading.
+The examples mount two host directories. Relative paths start beside the Compose file. A and B each keep their own directories.
+
+`./caddy-config:/etc/caddy` stores Caddy configuration. It contains the managed `Caddyfile`, generated routes in `default.d/default.caddy`, and your custom snippets in `conf.d/`. Startup replaces the managed files, and Docker events regenerate the routes. Keep manual changes in `conf.d/`.
+
+`./caddy-data:/data` stores Caddy's persistent state under `/data/caddy`. This includes certificates, their private keys, ACME account keys, and local certificate authorities when used. It does not store your application's files or database.
+
+Preserve and back up both directories when updating containers. Protect the data backup because it contains private keys. Losing `/data` requires new certificates and can trigger certificate authority issuance limits. Losing `/etc/caddy` removes custom snippets, but Docker labels can regenerate the managed routes. An `/etc/caddy` mount alone does not preserve certificates.
 
 The Docker socket mount is `/var/run/docker.sock:/tmp/docker.sock:ro`. Docker API access remains privileged even with a read-only socket mount. Only trusted operators can edit routing labels or snippets.
 

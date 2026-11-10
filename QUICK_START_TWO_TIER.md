@@ -1,6 +1,6 @@
 # Two-machine quick start
 
-Use [the complete A and B YAML examples](TWO_TIER_SETUP.md). They use `zhuoyin/caddy-full:latest` from Docker Hub and include service labels, network connections, and persistent certificate storage. No local build is required.
+Use [the complete A and B YAML examples](TWO_TIER_SETUP.md). They use `ghcr.io/yzard/caddy-full:latest` from GitHub Container Registry (GHCR) and include service labels, network connections, and persistent certificate storage. No local build is required.
 
 For the repository sample files, replace the example domains and emails first. On B, run this command from the repository root:
 

@@ -1,7 +1,7 @@
 # Run on A. Set FALLBACK_HOST to B's LAN address before starting Compose.
 services:
   rp1:
-    image: zhuoyin/caddy-full:latest
+    image: ghcr.io/yzard/caddy-full:latest
     pull_policy: always
     restart: unless-stopped
     environment:

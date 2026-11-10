@@ -1,6 +1,6 @@
 # Deploy on A and B
 
-A receives public TCP 443 traffic. B receives forwarded TLS connections from A. Both machines run Caddy Full and discover labels from their own Docker daemon. The examples pull `zhuoyin/caddy-full:latest` from Docker Hub. Neither machine needs the source repository or a local image build.
+A receives public TCP 443 traffic. B receives forwarded TLS connections from A. Both machines run Caddy Full and discover labels from their own Docker daemon. The examples pull `ghcr.io/yzard/caddy-full:latest` from GitHub Container Registry (GHCR). Neither machine needs the source repository or a local image build.
 
 ```text
 Internet TCP 443 -> A
@@ -22,7 +22,7 @@ Save this file as `compose.yaml` in a deployment directory on A. Replace `192.16
 ```yaml
 services:
   rp1:
-    image: zhuoyin/caddy-full:latest
+    image: ghcr.io/yzard/caddy-full:latest
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -65,7 +65,7 @@ Save this file as `compose.yaml` in a deployment directory on B. Replace the dom
 ```yaml
 services:
   rp2:
-    image: zhuoyin/caddy-full:latest
+    image: ghcr.io/yzard/caddy-full:latest
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -107,7 +107,11 @@ On each machine, run this command beside its `compose.yaml`:
 docker compose up -d
 ```
 
-`pull_policy: always` makes Compose pull the current proxy image when you run `docker compose up -d`. Run that command again to apply a newer image. Existing certificate and configuration directories remain mounted.
+After each push to `main`, a successful GitHub Actions build and test run publishes the new GHCR `latest` image. Running containers do not update automatically.
+
+`pull_policy: always` makes Compose pull the current proxy image when you run `docker compose up -d`. After publication, run that command on A and B to apply the newer image. Existing certificate and configuration directories remain mounted.
+
+The `caddy-config` directory stores generated configuration and custom snippets. The `caddy-data` directory stores certificates, private keys, and ACME accounts. Each machine keeps its own directories. See [directory details](README.md#generated-files-and-state) before changing or removing these mounts.
 
 On B, read the certificate logs:
 
