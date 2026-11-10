@@ -5,3 +5,5 @@ Use `two-tier-host1-docker-compose.yml` on A and `two-tier-host2-docker-compose.
 The files pull `ghcr.io/yzard/caddy-full:latest` from GitHub Container Registry (GHCR). `pull_policy: always` requests the current image when Compose starts the stack. No local build is required. They persist certificates in `/data` and custom snippets in `/etc/caddy`.
 
 See [the deployment guide](../TWO_TIER_SETUP.md) for network requirements and complete standalone YAML examples. See [verification details](../VERIFICATION.md) for the isolated test command.
+
+The A example enables SSH on TCP 443 and forwards it to the host SSH server on port 22. Its `extra_hosts` mapping provides the host address. Set `SSH_SPLITTER` to `false` if you do not need SSH splitting.

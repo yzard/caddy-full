@@ -27,10 +27,13 @@ services:
     restart: unless-stopped
     environment:
       FALLBACK_PROXY: "192.168.1.20:443"
+      SSH_SPLITTER: "true"
       PUID: "1000"
       PGID: "1000"
       UMASK: "022"
       TZ: America/New_York
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
@@ -57,6 +60,10 @@ networks:
 ```
 
 A selects internal port 8443 automatically when `FALLBACK_PROXY` is set. You do not need to set `HTTPS_PORT`. Port 8443 stays inside the container. The public port 443 reads the requested domain before forwarding the original TLS connection.
+
+A also enables SSH on TCP 443 through `SSH_SPLITTER=true`. The `extra_hosts` entry lets Caddy reach A's host SSH server at `host.docker.internal:22`. SSH stays on A, while HTTPS continues to use the domain routes. Set `SSH_SPLITTER` to `false` to disable SSH splitting.
+
+Connect through the shared port with `ssh -p 443 your-user@a.example.com`. If A uses another SSH port, set `SSH_PROXY` to `host.docker.internal:PORT`. See [SSH splitting details](README.md#ssh-on-the-https-port) for requirements and migration from an external splitter.
 
 ## Machine B
 

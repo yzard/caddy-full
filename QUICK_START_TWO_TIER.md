@@ -15,3 +15,5 @@ FALLBACK_HOST=192.168.1.20 docker compose -f sample/two-tier-host1-docker-compos
 ```
 
 Both proxies use TLS-ALPN validation through TCP 443. Service labels stay on the machine that runs each service. Unknown domains without certificates fail the TLS handshake.
+
+The A example enables SSH on TCP 443 and forwards it to the host SSH server on port 22. Its `extra_hosts` mapping provides the host address. Set `SSH_SPLITTER` to `false` if you do not need SSH splitting.

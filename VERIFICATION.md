@@ -1,14 +1,16 @@
 # Verification
 
-The local image build and five integration tests passed on November 9, 2026. The suite completed in approximately 16 seconds. It includes Brotli compression, an explicit override test, and an empty-value default test.
+The local image build and seven integration tests passed on November 10, 2026. The suite completed in approximately 31 seconds. It covers optional SSH splitting, certificate forwarding, Brotli compression, and runtime configuration.
+
+The SSH update also passed a real OpenSSH handshake against the local host. The shared port reached SSH authentication and presented the same host key as direct port 22. This test did not log in or run a remote command. The `ssh-keyscan` tool timed out because it waits for the server banner before sending identification bytes.
 
 ## Commands
 
 Run these commands from the repository root:
 
 ```sh
-docker build --pull -t caddy-full:security-test .
-CADDY_TEST_IMAGE=caddy-full:security-test ./sample/verify-two-tier.sh
+docker build --pull -t caddy-full:ssh-test .
+CADDY_TEST_IMAGE=caddy-full:ssh-test ./sample/verify-two-tier.sh
 git diff --check
 sh -n docker-entrypoint.sh sample/verify-two-tier.sh
 docker compose -f sample/docker-compose.yml config -q
@@ -24,7 +26,11 @@ The tests use isolated Docker containers for A, B, applications, and Pebble. Peb
 
 The following behavior passed:
 
-- A and B obtain certificates after their application containers start.
+- A and B obtain certificates with SSH splitting enabled and disabled.
+- SSH, plain HTTP, and HTTPS share TCP 443 with and without a fallback proxy.
+- Fragmented SSH identification bytes and binary payloads reach the SSH backend unchanged.
+- SSH stays available after route reloads and while B is down.
+- Disabling SSH splitting removes the SSH route and preserves HTTPS with the stored certificate.
 - B completes TLS-ALPN-01 validation through A, with no B-only labels on A.
 - Both email labels and the default issuer use TLS-ALPN-01 with `TLS_ALPN_ONLY` omitted.
 - Multiple names and explicit `:443` labels route correctly through A.
@@ -43,7 +49,7 @@ The following behavior passed:
 - Brotli responses decode to their original content with a Brotli-capable curl client.
 - The proxy containers stop without a forced kill.
 
-The test containers, networks, and volumes are removed after each test. The local image remains available as `caddy-full:security-test`.
+The test containers, networks, and volumes are removed after each test. The local image remains available as `caddy-full:ssh-test`.
 
 ## Example route output
 

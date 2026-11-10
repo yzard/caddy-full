@@ -3,8 +3,29 @@
 set -o errexit
 set -o nounset
 
-# A fallback always passes the original TLS connection to the next host.
-if [ -n "${FALLBACK_PROXY:-}" ]; then
+SSH_SPLITTER="${SSH_SPLITTER:-false}"
+case "$SSH_SPLITTER" in
+    true|false) ;;
+    *) echo "SSH_SPLITTER must be true or false" >&2; exit 1 ;;
+esac
+SSH_PROXY="${SSH_PROXY:-host.docker.internal:22}"
+if [ "$SSH_SPLITTER" = true ]; then
+    case "$SSH_PROXY" in
+        *[[:space:]]*) echo "SSH_PROXY must not contain whitespace" >&2; exit 1 ;;
+    esac
+    if ! printf '%s\n' "$SSH_PROXY" | awk '
+        /^[a-zA-Z0-9._-]+:[0-9]+$/ || /^\[[0-9a-fA-F:]+\]:[0-9]+$/ {
+            sub(/^.*:/, ""); if ($0 >= 1 && $0 <= 65535) valid=1
+        }
+        END { exit !valid }
+    '; then
+        echo "SSH_PROXY must be a host:port address with a port between 1 and 65535" >&2
+        exit 1
+    fi
+fi
+
+# Layer 4 owns public port 443 when either forwarding feature is enabled.
+if [ -n "${FALLBACK_PROXY:-}" ] || [ "$SSH_SPLITTER" = true ]; then
     HTTPS_PORT="${HTTPS_PORT:-8443}"
 else
     HTTPS_PORT="${HTTPS_PORT:-443}"
@@ -16,8 +37,8 @@ if [ "$HTTPS_PORT" -lt 1 ] || [ "$HTTPS_PORT" -gt 65535 ] || [ "$HTTPS_PORT" -eq
     echo "HTTPS_PORT must be between 1 and 65535 and different from 80" >&2
     exit 1
 fi
-if [ -n "${FALLBACK_PROXY:-}" ] && [ "$HTTPS_PORT" -eq 443 ]; then
-    echo "FALLBACK_PROXY reserves port 443. Set HTTPS_PORT=8443 or leave it unset." >&2
+if { [ -n "${FALLBACK_PROXY:-}" ] || [ "$SSH_SPLITTER" = true ]; } && [ "$HTTPS_PORT" -eq 443 ]; then
+    echo "Layer 4 reserves port 443. Leave HTTPS_PORT unset or use a different internal port." >&2
     exit 1
 fi
 case "${FALLBACK_PROXY:-}" in
@@ -28,7 +49,7 @@ case "$TLS_ALPN_ONLY" in
     true|false) ;;
     *) echo "TLS_ALPN_ONLY must be true or false" >&2; exit 1 ;;
 esac
-export HTTPS_PORT TLS_ALPN_ONLY
+export HTTPS_PORT TLS_ALPN_ONLY SSH_SPLITTER SSH_PROXY
 
 # Optional runtime settings (host-friendly permissions, TZ, umask).
 if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then

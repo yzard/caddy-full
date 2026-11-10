@@ -1,4 +1,6 @@
 {{- $fallback := env "FALLBACK_PROXY" -}}
+{{- $sshSplitter := eq (env "SSH_SPLITTER") "true" -}}
+{{- $layer4 := or $fallback $sshSplitter -}}
 {{- $httpsPort := env "HTTPS_PORT" | default "443" -}}
 {{- $instance := env "CADDY_INSTANCE" -}}
 {{- $containers := $ -}}
@@ -24,7 +26,7 @@
 {{- end -}}
 {{- $hosts = uniq $hosts | sortAlpha -}}
 {
-    {{ if $fallback }}auto_https disable_redirects{{ end }}
+    {{ if $layer4 }}auto_https disable_redirects{{ end }}
     http_port 80
     https_port {{ $httpsPort }}
     # TLS routing uses TCP. Do not advertise an unreachable HTTP/3 endpoint.
@@ -39,9 +41,16 @@
     {{ end }}
     {{ if env "ACME_CA" }}acme_ca {{ env "ACME_CA" }}{{ end }}
     {{ if env "ACME_CA_ROOT" }}acme_ca_root {{ env "ACME_CA_ROOT" }}{{ end }}
-    {{ if $fallback }}
+    {{ if $layer4 }}
     layer4 {
         :443 {
+            {{ if $sshSplitter }}
+            @ssh ssh
+            route @ssh {
+                proxy {{ env "SSH_PROXY" }}
+            }
+            {{ end }}
+            {{ if $fallback }}
             {{ if $hosts }}
             @known tls sni {{ join " " $hosts }}
             route @known {
@@ -52,6 +61,18 @@
             route @fallback {
                 proxy {{ $fallback }}
             }
+            {{ else }}
+            @https tls
+            route @https {
+                proxy 127.0.0.1:{{ $httpsPort }}
+            }
+            {{ end }}
+            {{ if $sshSplitter }}
+            @http http
+            route @http {
+                proxy 127.0.0.1:80
+            }
+            {{ end }}
         }
     }
     {{ end }}
@@ -87,9 +108,9 @@
     {{ $sites := list }}
     {{ range $site := regexSplit "[\\s,]+" (trim $val) -1 }}
       {{ if $site }}
-        {{ if $fallback }}
+        {{ if $layer4 }}
           {{ if or (hasPrefix "http://" $site) (and (regexMatch ":[0-9]+$" $site) (not (hasSuffix ":443" $site))) }}
-            {{ fail (printf "Fallback requires HTTPS sites on public port 443, got %q on %s" $site $name) }}
+            {{ fail (printf "Layer 4 requires HTTPS sites on public port 443, got %q on %s" $site $name) }}
           {{ end }}
           {{ $site = trimSuffix ":443" $site }}
         {{ end }}

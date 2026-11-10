@@ -48,10 +48,13 @@ services:
     restart: unless-stopped
     environment:
       FALLBACK_PROXY: "192.168.1.20:443"
+      SSH_SPLITTER: "true"
       PUID: "1000"
       PGID: "1000"
       UMASK: "022"
       TZ: America/New_York
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
@@ -179,10 +182,36 @@ To add a service, create its DNS record and labels only on the machine that runs
 
 See the [deployment guide](TWO_TIER_SETUP.md) for migration notes and custom snippets. Download the sample files for [machine A](sample/two-tier-host1-docker-compose.yml) and [machine B](sample/two-tier-host2-docker-compose.yml).
 
+## SSH on the HTTPS port
+
+The A example enables `SSH_SPLITTER=true`. Caddy Layer 4 identifies SSH, HTTP, and TLS from the first bytes of each connection on TCP 443. It forwards SSH to the host's SSH server and keeps the existing HTTPS routes. This feature uses the existing Caddy process without Nginx.
+
+`SSH_SPLITTER` defaults to `false` when omitted or empty. Set it to `true` to enable splitting, including on a single machine without `FALLBACK_PROXY`. `SSH_PROXY` defaults to `host.docker.internal:22`. Set `SSH_PROXY` to another `host:port` if the host uses a different SSH port.
+
+The Compose `extra_hosts` entry maps `host.docker.internal` to the Docker host gateway. Container loopback addresses refer to the container, not the host. The host SSH server must listen on an address reachable from Docker. Allow that connection through the host firewall.
+
+With A's example running, connect to A through port 443:
+
+```sh
+ssh -p 443 your-user@a.example.com
+```
+
+SSH uses the host's existing accounts, host keys, and authentication. It does not use HTTPS certificates or wrap SSH in TLS. SSH sends no TLS SNI domain, so all SSH connections to A's port 443 reach A's configured SSH destination. They do not follow the domain fallback to B.
+
+The SSH client must send its identification bytes first. The standard OpenSSH `ssh` client works. Tools that wait for the server banner, including `ssh-keyscan`, time out on this shared port. Use the host's normal SSH port for those tools.
+
+HTTPS retains local SNI routing and TLS passthrough to B, including certificate validation. Plain HTTP on port 443 goes to Caddy's HTTP listener on port 80. That listener redirects known sites to HTTPS, or returns its existing unknown-domain response. Port 80 continues to serve HTTP normally.
+
+When replacing an external splitter, preserve the Caddy configuration and data directories. Move the host mappings for ports 80 and 443 to Caddy Full. Add `SSH_SPLITTER: "true"` and the `extra_hosts` mapping to its service. Stop the old splitter before starting Caddy Full with those host mappings. The two containers cannot bind the same host ports simultaneously.
+
+See the upstream [SSH matcher](https://github.com/mholt/caddy-l4/blob/v0.1.2/docs/matchers/ssh.md) and [HTTP matcher](https://github.com/mholt/caddy-l4/blob/v0.1.2/docs/matchers/http.md) documentation.
+
 ## Configuration
 
+- `SSH_SPLITTER`: `true` enables SSH, HTTP, and HTTPS on TCP 443. The default is `false`.
+- `SSH_PROXY`: SSH destination as `host:port`, with `host.docker.internal:22` as the default. Used only when splitting is enabled.
 - `FALLBACK_PROXY`: next machine as `host:port`, without a URL scheme. An empty value disables forwarding.
-- `HTTPS_PORT`: optional override for the local Caddy HTTPS port. Leave it unset for the standard deployment. It defaults to `8443` with fallback and `443` without fallback. Fallback reserves TCP 443.
+- `HTTPS_PORT`: optional override for the local Caddy HTTPS port. Leave it unset for the standard deployment. It defaults to `8443` when fallback or SSH splitting is enabled, and `443` otherwise. Layer 4 reserves TCP 443 when either feature is enabled.
 - `TLS_ALPN_ONLY`: `true` selects ACME validation over TLS on port 443. It defaults to `true`, including when the value is empty. Set it to `false` to also enable HTTP validation on port 80.
 - `LOCAL_DOMAINS`: space-separated domains from hand-written `conf.d` sites that A must handle locally. This does not create sites or certificates.
 - `CADDY_INSTANCE`: optional label scope when several proxies use one Docker daemon. Matching services require `caddy.instance` with the same value.

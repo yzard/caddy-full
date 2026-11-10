@@ -9,9 +9,11 @@ import json
 import os
 from pathlib import Path
 import socket
+import socketserver
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -91,7 +93,7 @@ class TwoTierTest(unittest.TestCase):
             "--label", f"caddy.0.domain={domain}", "--label", "caddy.0.port=80", *extra,
         ], image="nginx:1.28-alpine", command=["-c", f"echo {content} > /usr/share/nginx/html/index.html; exec nginx -g 'daemon off;'"])
 
-    def proxy(self, name, fallback=None, acme=False):
+    def proxy(self, name, fallback=None, acme=False, ssh_proxy=None):
         volume = self.prefix + "-" + name + "-data"
         if volume not in self.volumes:
             self.volumes.append(volume)
@@ -103,6 +105,9 @@ class TwoTierTest(unittest.TestCase):
         ]
         if fallback:
             args += ["-e", f"FALLBACK_PROXY={fallback}:443"]
+        if ssh_proxy:
+            args += ["-e", "SSH_SPLITTER=true", "-e", f"SSH_PROXY={ssh_proxy}",
+                     "--add-host", "host.docker.internal:host-gateway"]
         if acme:
             args += ["-v", f"{self.directory}:/test:ro",
                      "-e", "ACME_CA=https://pebble:14000/dir",
@@ -111,6 +116,39 @@ class TwoTierTest(unittest.TestCase):
             for domain in ["a.caddy-full.test", "alias.caddy-full.test", "b.caddy-full.test"]:
                 args += ["--network-alias", domain]
         return self.start(name, args)
+
+    def ssh_backend(self):
+        # A protocol fixture tests byte preservation without a host SSH dependency.
+        class SSHBackend(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.settimeout(5)
+                self.request.sendall(b"SSH-2.0-CaddyTest\r\n")
+                try:
+                    while data := self.request.recv(4096):
+                        self.request.sendall(data)
+                except (TimeoutError, ConnectionError):
+                    pass
+
+        server = socketserver.ThreadingTCPServer(("0.0.0.0", 0), SSHBackend)
+        server.daemon_threads = True
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"host.docker.internal:{server.server_address[1]}"
+
+    def assert_ssh(self, port):
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
+            # Fragment the identifying bytes to exercise protocol detection.
+            conn.sendall(b"SS")
+            conn.sendall(b"H-2.0-client\r\n")
+            stream = conn.makefile("rb")
+            with stream:
+                self.assertEqual(stream.readline(), b"SSH-2.0-CaddyTest\r\n")
+                self.assertEqual(stream.readline(), b"SSH-2.0-client\r\n")
+                payload = bytes(range(256)) * 8
+                conn.sendall(payload)
+                self.assertEqual(stream.read(len(payload)), payload)
 
     def start_ca(self):
         subprocess.run([
@@ -138,10 +176,17 @@ class TwoTierTest(unittest.TestCase):
         return ca, ssl.create_default_context(cadata=pem)
 
     def test_certificate_relay_and_dynamic_routes(self):
+        self.certificate_relay_and_dynamic_routes(ssh_splitter=False)
+
+    def test_ssh_splitter_with_certificate_relay(self):
+        self.certificate_relay_and_dynamic_routes(ssh_splitter=True)
+
+    def certificate_relay_and_dynamic_routes(self, ssh_splitter):
         try:
             ca, context = self.start_ca()
             b = self.proxy("b", acme=True)
-            a = self.proxy("a", fallback=b, acme=True)
+            ssh_proxy = self.ssh_backend() if ssh_splitter else None
+            a = self.proxy("a", fallback=b, acme=True, ssh_proxy=ssh_proxy)
             port = self.port(a, 443)
             # Start with zero labels, then require both HTTP and SNI routes to reload.
             def expect(domain, body, path="/", status=200):
@@ -152,6 +197,11 @@ class TwoTierTest(unittest.TestCase):
                 return result
 
             eventually(lambda: self.assertEqual(self.request(self.port(a, 80), "ready.test")[0], 301))
+            if ssh_splitter:
+                eventually(lambda: self.assert_ssh(port))
+                status, _, headers = self.request(port, "b.caddy-full.test", "/hello?q=1")
+                self.assertEqual(status, 301)
+                self.assertEqual(headers["Location"], "https://b.caddy-full.test/hello?q=1")
             eventually(lambda: self.assertEqual(self.request(self.port(b, 80), "ready.test")[0], 404))
             self.app("app-b", "b", "b.caddy-full.test", "machine-b")
             eventually(lambda: expect("b.caddy-full.test", "machine-b"), timeout=100)
@@ -181,10 +231,14 @@ class TwoTierTest(unittest.TestCase):
             docker("rm", "-fv", override)
             eventually(lambda: expect("b.caddy-full.test", "machine-b"))
             print("PASS: local labels take priority and removal restores B fallback", flush=True)
+            if ssh_splitter:
+                self.assert_ssh(port)
 
             before = docker("exec", b, "sh", "-c", "find /data/caddy/certificates -name '*.crt' -exec sha256sum {} ';'")
             docker("stop", "-t", "5", b)
             expect("a.caddy-full.test", "machine-a")
+            if ssh_splitter:
+                self.assert_ssh(port)
             with self.assertRaises(OSError):
                 self.request(port, "b.caddy-full.test", context=context)
             docker("rm", "-fv", b)
@@ -201,6 +255,37 @@ class TwoTierTest(unittest.TestCase):
                 result = subprocess.run(["docker", "logs", "--tail", "70", name], capture_output=True, text=True)
                 print(f"\n{name}\n{result.stdout}{result.stderr}", flush=True)
             raise
+
+    def test_ssh_splitter_without_fallback(self):
+        _, context = self.start_ca()
+        self.app("app-a", "a", "a.caddy-full.test", "standalone")
+        proxy = self.proxy("a", acme=True, ssh_proxy=self.ssh_backend())
+        port = self.port(proxy, 443)
+        eventually(lambda: self.assert_ssh(port))
+        eventually(lambda: self.assertEqual(
+            self.request(port, "a.caddy-full.test", context=context)[1].strip(), "standalone"
+        ), timeout=100)
+        status, _, headers = self.request(port, "a.caddy-full.test", "/hello")
+        self.assertEqual(status, 301)
+        self.assertEqual(headers["Location"], "https://a.caddy-full.test/hello")
+        self.assertEqual(self.request(port, "unknown.caddy-full.test")[0], 404)
+        with self.assertRaises(ssl.SSLError):
+            self.request(port, "unknown.caddy-full.test", context=context)
+
+        docker("rm", "-fv", proxy)
+        proxy = self.proxy("a", acme=True)
+        port = self.port(proxy, 443)
+        eventually(lambda: self.assertEqual(
+            self.request(port, "a.caddy-full.test", context=context)[1].strip(), "standalone"
+        ))
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as conn:
+            conn.sendall(b"SSH-2.0-client\r\n")
+            try:
+                response = conn.recv(256)
+            except ConnectionResetError:
+                response = b""
+            self.assertFalse(response.startswith(b"SSH-"), response)
+        print("PASS: standalone SSH/HTTP/HTTPS and certificates work, disabling removes SSH routing", flush=True)
 
     def test_internal_tls_with_existing_uid(self):
         self.app("internal-app", "b", "app.localhost", "internal-app",
@@ -257,12 +342,17 @@ class TwoTierTest(unittest.TestCase):
         eventually(compressed_response)
 
     def test_invalid_configuration(self):
-        for setting in ["HTTPS_PORT=80", "HTTPS_PORT=invalid", "PUID=invalid", "TLS_ALPN_ONLY=invalid"]:
+        for setting in ["HTTPS_PORT=80", "HTTPS_PORT=invalid", "PUID=invalid", "TLS_ALPN_ONLY=invalid", "SSH_SPLITTER=invalid"]:
             result = subprocess.run(["docker", "run", "--rm", "-e", setting, IMAGE], capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         result = subprocess.run(["docker", "run", "--rm", "-e", "FALLBACK_PROXY=b:443", "-e", "HTTPS_PORT=443", IMAGE], capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("reserves port 443", result.stderr)
+        for setting in ["HTTPS_PORT=443", "SSH_PROXY=http://host:22", "SSH_PROXY=host:0", "SSH_PROXY=host:65536", "SSH_PROXY=host:22\n}"]:
+            result = subprocess.run([
+                "docker", "run", "--rm", "-e", "SSH_SPLITTER=true", "-e", setting, IMAGE,
+            ], capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
