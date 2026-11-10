@@ -233,6 +233,29 @@ class TwoTierTest(unittest.TestCase):
             )
             self.assertEqual("disable_http_challenge" in output, disabled)
 
+    def test_brotli_response(self):
+        payload = "Brotli response from the upgraded Caddy image. " * 100
+        (self.directory / "compression.caddy").write_text(
+            ':8080 {\n encode br gzip zstd\n respond "' + payload + '"\n}\n'
+        )
+        proxy = self.start("compression", [
+            "--entrypoint", "caddy", "-v", f"{self.directory}:/test:ro",
+            "-p", "127.0.0.1::8080",
+        ], command=["run", "--config", "/test/compression.caddy", "--adapter", "caddyfile"])
+        headers = self.directory / "compression.headers"
+
+        def compressed_response():
+            result = subprocess.run([
+                "curl", "--fail", "--silent", "--show-error", "--compressed",
+                "--noproxy", "*", "-H", "Accept-Encoding: br", "-D", str(headers),
+                f"http://127.0.0.1:{self.port(proxy, 8080)}/",
+            ], capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("content-encoding: br", headers.read_text().lower())
+            self.assertEqual(result.stdout, payload)
+
+        eventually(compressed_response)
+
     def test_invalid_configuration(self):
         for setting in ["HTTPS_PORT=80", "HTTPS_PORT=invalid", "PUID=invalid", "TLS_ALPN_ONLY=invalid"]:
             result = subprocess.run(["docker", "run", "--rm", "-e", setting, IMAGE], capture_output=True, text=True, timeout=10)

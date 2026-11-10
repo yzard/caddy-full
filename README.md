@@ -93,7 +93,7 @@ docker build -t caddy-full:two-tier-test .
 ./sample/verify-two-tier.sh
 ```
 
-The test needs Docker, Python 3, OpenSSL, and access to the test container images. It uses Pebble, a local ACME test server, with real TLS-ALPN validation. It creates isolated containers and volumes, then removes them. It does not request public certificates.
+The test needs Docker, Python 3, OpenSSL, curl with Brotli support, and access to the test container images. It uses Pebble, a local ACME test server, with real TLS-ALPN validation. It creates isolated containers and volumes, then removes them. It does not request public certificates.
 
 See [verification details](VERIFICATION.md). `build.sh` is the existing registry publication script and pushes images. Use `docker build` for local builds.
 

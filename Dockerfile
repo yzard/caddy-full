@@ -1,7 +1,7 @@
-ARG DOCKER_GEN_VERSION="0.16.1"
-ARG FOREGO_VERSION="v0.18.2"
-ARG GO_VERSION="1.25.5"
-ARG CADDY_VERSION="2.10.2"
+ARG DOCKER_GEN_VERSION="0.17.2"
+ARG FOREGO_VERSION="v0.18.8"
+ARG GO_VERSION="1.27.3"
+ARG CADDY_VERSION="2.11.9"
 
 
 # building forego
@@ -17,12 +17,16 @@ RUN git clone https://github.com/nginx-proxy/forego/ \
    && cd - \
    && rm -rf /go/forego
 
+# Patch dependencies beyond the latest docker-gen tag to include security fixes.
 # building docker-gen
 FROM golang:${GO_VERSION} AS dockergen
 ARG DOCKER_GEN_VERSION
 RUN git clone https://github.com/nginx-proxy/docker-gen \
    && cd /go/docker-gen \
    && git -c advice.detachedHead=false checkout $DOCKER_GEN_VERSION \
+   && go get github.com/fsouza/go-dockerclient@v1.13.3 \
+       github.com/klauspost/compress@v1.20.4 \
+       golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2 \
    && go mod download \
    && CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.buildVersion=${DOCKER_GEN_VERSION}" ./cmd/docker-gen \
    && go clean -cache \
@@ -33,9 +37,15 @@ RUN git clone https://github.com/nginx-proxy/docker-gen \
 # building caddy with brotli and layer4 support
 FROM caddy:${CADDY_VERSION}-builder-alpine AS caddy_bundle
 ARG CADDY_VERSION
+ARG GO_VERSION
+ENV GOTOOLCHAIN=go${GO_VERSION}
+# Pin dependency security fixes that are newer than the Caddy release.
 RUN xcaddy build v${CADDY_VERSION} \
-    --with github.com/ueffel/caddy-brotli@2a080feb1c91d56672c2b9d97ffed086b960582f \
-    --with github.com/mholt/caddy-l4@1a3490ef786a8fd93128d55aed1999930b7c0586
+    --with github.com/ueffel/caddy-brotli@v1.7.0 \
+    --with github.com/mholt/caddy-l4@v0.1.2 \
+    --replace golang.org/x/net=golang.org/x/net@v0.62.0 \
+    --replace github.com/klauspost/compress=github.com/klauspost/compress@v1.20.4 \
+    --replace golang.org/x/crypto=golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2
 
 
 # start build actual image
