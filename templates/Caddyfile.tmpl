@@ -1,53 +1,130 @@
-{{ range $index, $container := $ }}
+{{- $fallback := env "FALLBACK_PROXY" -}}
+{{- $httpsPort := env "HTTPS_PORT" | default "443" -}}
+{{- $instance := env "CADDY_INSTANCE" -}}
+{{- $containers := $ -}}
+{{- if $instance -}}
+  {{- $containers = whereLabelValueMatches $ "caddy.instance" (printf "^%s$" (regexQuoteMeta $instance)) -}}
+{{- end -}}
+{{- $hosts := list -}}
+{{- range $container := $containers -}}
+  {{- range $label, $val := $container.Labels -}}
+    {{- if and (hasPrefix "caddy." $label) (hasSuffix ".domain" $label) -}}
+      {{- range $domain := regexSplit "[\\s,]+" (trim $val) -1 -}}
+        {{- if $domain -}}
+          {{- $host := regexReplaceAll "^https?://" $domain "" -}}
+          {{- $host = regexReplaceAll ":[0-9]+$" $host "" -}}
+          {{- $hosts = append $hosts $host -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range $host := regexSplit "[\\s,]+" (trim (env "LOCAL_DOMAINS")) -1 -}}
+  {{- if $host -}}{{- $hosts = append $hosts $host -}}{{- end -}}
+{{- end -}}
+{{- $hosts = uniq $hosts | sortAlpha -}}
+{
+    {{ if $fallback }}auto_https disable_redirects{{ end }}
+    http_port 80
+    https_port {{ $httpsPort }}
+    # TLS routing uses TCP. Do not advertise an unreachable HTTP/3 endpoint.
+    servers {
+        protocols h1 h2
+        strict_sni_host on
+    }
+    {{ if eq (env "TLS_ALPN_ONLY") "true" }}
+    cert_issuer acme {
+        disable_http_challenge
+    }
+    {{ end }}
+    {{ if env "ACME_CA" }}acme_ca {{ env "ACME_CA" }}{{ end }}
+    {{ if env "ACME_CA_ROOT" }}acme_ca_root {{ env "ACME_CA_ROOT" }}{{ end }}
+    {{ if $fallback }}
+    layer4 {
+        :443 {
+            {{ if $hosts }}
+            @known tls sni {{ join " " $hosts }}
+            route @known {
+                proxy 127.0.0.1:{{ $httpsPort }}
+            }
+            {{ end }}
+            @fallback tls
+            route @fallback {
+                proxy {{ $fallback }}
+            }
+        }
+    }
+    {{ end }}
+}
+
+# Named sites take precedence over these catch-all routes.
+:80 {
+    {{ if $fallback }}
+    redir https://{host}{uri} permanent
+    {{ else }}
+    {{ if $hosts }}
+    @known host {{ join " " $hosts }}
+    redir @known https://{host}{uri} permanent
+    {{ end }}
+    respond "Not Found" 404
+    {{ end }}
+}
+
+:{{ $httpsPort }} {
+    respond "Not Found" 404
+}
+
+{{ range $container := $containers }}
   {{ $name := $container.Name }}
   {{ range $label, $val := $container.Labels }}
-    {{ if not (hasPrefix "caddy." $label) }} {{ continue }} {{ end }}
-
-    {{ $suffix := trimPrefix "caddy." $label }}
-
-    {{ if not (hasSuffix ".domain" $suffix) }} {{ continue }} {{ end }}
-
-    {{ $idx := trimSuffix ".domain" $suffix }}
-    {{ $domain := $val }}
+    {{ if not (and (hasPrefix "caddy." $label) (hasSuffix ".domain" $label)) }}{{ continue }}{{ end }}
+    {{ $idx := trimSuffix ".domain" (trimPrefix "caddy." $label) }}
     {{ $base := print "caddy." $idx "." }}
-
     {{ $port := index $container.Labels (print $base "port") | default "80" }}
     {{ $tls := index $container.Labels (print $base "tls") }}
     {{ $rewrite := index $container.Labels (print $base "rewrite") }}
-
     {{ $paths := index $container.Labels (print $base "paths") }}
-
-{{ $domain }} {
+    {{ $sites := list }}
+    {{ range $site := regexSplit "[\\s,]+" (trim $val) -1 }}
+      {{ if $site }}
+        {{ if $fallback }}
+          {{ if or (hasPrefix "http://" $site) (and (regexMatch ":[0-9]+$" $site) (not (hasSuffix ":443" $site))) }}
+            {{ fail (printf "Fallback requires HTTPS sites on public port 443, got %q on %s" $site $name) }}
+          {{ end }}
+          {{ $site = trimSuffix ":443" $site }}
+        {{ end }}
+        {{ $sites = append $sites $site }}
+      {{ end }}
+    {{ end }}
+{{ join " " $sites }} {
     log {
         output stdout
     }
     encode br gzip zstd
-    {{ if $tls}}tls {{ $tls }}{{ end }}
+    {{ if and (eq (env "TLS_ALPN_ONLY") "true") (or (not $tls) (regexMatch "^[^\\s]+@[^\\s]+$" $tls)) }}
+    tls {
+        issuer acme {
+            {{ if $tls }}email {{ $tls }}{{ end }}
+            disable_http_challenge
+        }
+    }
+    {{ else if $tls }}tls {{ $tls }}{{ end }}
     {{ if $rewrite }}rewrite {{ $rewrite }}{{ end }}
-
     {{ if $paths }}
+    route {
       {{ range $index, $pair := split $paths "," }}
         {{ $parts := split $pair ":" }}
-        {{ $path := index $parts 0 }}
-        {{ $path_port := index $parts 1 }}
-    @{{ $path }} path /{{ $path }}/* /{{ $path }}
-    reverse_proxy @{{ $path }} {{ $name }}:{{ $path_port }}
-
+        {{ if ne (len $parts) 2 }}{{ fail (printf "Invalid path:port pair %q on %s" $pair $name) }}{{ end }}
+        {{ $path := trim (index $parts 0) }}
+        {{ $pathPort := trim (index $parts 1) }}
+        @path{{ $index }} path /{{ $path }}/* /{{ $path }}
+        reverse_proxy @path{{ $index }} {{ $name }}:{{ $pathPort }}
       {{ end }}
-    @defa path /* /
-    reverse_proxy @defa {{ $name }}:{{ $port }}
-
+        reverse_proxy {{ $name }}:{{ $port }}
+    }
     {{ else }}
     reverse_proxy {{ $name }}:{{ $port }}
     {{ end }}
 }
-
   {{ end }}
-{{ end }}
-
-{{ $fallback := env "FALLBACK_PROXY" }}
-{{ if $fallback }}
-:443 {
-    reverse_proxy {{ $fallback }}
-}
 {{ end }}

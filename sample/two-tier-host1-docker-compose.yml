@@ -1,0 +1,26 @@
+# Run on A. Set FALLBACK_HOST to B's LAN address before starting Compose.
+services:
+  rp1:
+    build: ..
+    image: caddy-full:local
+    restart: unless-stopped
+    environment:
+      FALLBACK_PROXY: ${FALLBACK_HOST:?Set FALLBACK_HOST to B's LAN address}:443
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-022}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./host1-caddy-config:/etc/caddy
+      - ./host1-caddy-data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+
+  app-a:
+    image: nginx:alpine
+    labels:
+      caddy.0.domain: a.example.com
+      caddy.0.port: "80"
+      caddy.0.tls: admin@example.com

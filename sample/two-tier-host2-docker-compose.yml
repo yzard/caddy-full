@@ -1,0 +1,24 @@
+# Run on B. Allow A to reach TCP 443 through B's firewall.
+services:
+  rp2:
+    build: ..
+    image: caddy-full:local
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: ${UMASK:-022}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./host2-caddy-config:/etc/caddy
+      - ./host2-caddy-data:/data
+    ports:
+      - "443:443"
+
+  app-b:
+    image: nginx:alpine
+    labels:
+      caddy.0.domain: b.example.com
+      caddy.0.port: "80"
+      caddy.0.tls: admin@example.com

@@ -63,3 +63,8 @@ $RECYCLE.BIN/
 
 # .nfs files are created when an open file is removed but is still being accessed
 .nfs*
+# Local Caddy state and Python caches
+sample/data/
+sample/host*-caddy-data/
+sample/host*-caddy-config/
+__pycache__/

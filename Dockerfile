@@ -32,13 +32,14 @@ RUN git clone https://github.com/nginx-proxy/docker-gen \
 
 # building caddy with brotli and layer4 support
 FROM caddy:${CADDY_VERSION}-builder-alpine AS caddy_bundle
-RUN xcaddy build \
-    --with github.com/ueffel/caddy-brotli \
-    --with github.com/mholt/caddy-l4
+ARG CADDY_VERSION
+RUN xcaddy build v${CADDY_VERSION} \
+    --with github.com/ueffel/caddy-brotli@2a080feb1c91d56672c2b9d97ffed086b960582f \
+    --with github.com/mholt/caddy-l4@1a3490ef786a8fd93128d55aed1999930b7c0586
 
 
 # start build actual image
-FROM alpine:latest AS main
+FROM alpine:3.22 AS main
 
 COPY --from=caddy_bundle /usr/bin/caddy /usr/bin/caddy
 COPY --from=forego /usr/local/bin/forego /usr/local/bin/forego
@@ -46,14 +47,17 @@ COPY --from=dockergen /usr/local/bin/docker-gen /usr/local/bin/docker-gen
 
 ENV CADDYPATH="/etc/caddy"
 ENV XDG_DATA_HOME="/data"
+ENV XDG_CONFIG_HOME="/etc/caddy"
 ENV DOCKER_HOST="unix:///tmp/docker.sock"
 
-RUN apk --no-cache add bash su-exec tzdata
+RUN apk --no-cache add bash su-exec tzdata ca-certificates
 
 EXPOSE 80 443 2015
-VOLUME /etc/caddy
+VOLUME /etc/caddy /data
 
-COPY . /code
+COPY Procfile docker-entrypoint.sh /code/
+COPY caddy /code/caddy
+COPY templates /code/templates
 WORKDIR /code
 
 

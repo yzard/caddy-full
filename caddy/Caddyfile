@@ -1,17 +1,3 @@
-{
-    log default {
-        output stdout
-        format json
-        include http.log.access
-    }
-
-    http_port 80
-    https_port 443
-}
-
-:80 {
-    redir https://{host}{uri} permanent
-}
-
-import default.d/*
+# The generated file contains global options and routes from one Docker snapshot.
+import default.d/default.caddy
 import conf.d/*

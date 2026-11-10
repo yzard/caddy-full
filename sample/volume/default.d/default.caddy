@@ -24,6 +24,6 @@ test3.localhost {
     @defa path /* /
     reverse_proxy @defa whoami2:80
 }
-:8443 {
+:443 {
     reverse_proxy whoami:253
 }

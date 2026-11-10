@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!Procfile
+!docker-entrypoint.sh
+!caddy/
+!caddy/Caddyfile
+!templates/
+!templates/*.tmpl
