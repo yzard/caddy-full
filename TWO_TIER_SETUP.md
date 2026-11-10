@@ -164,6 +164,8 @@ Preserve the existing `/data` volume before recreating containers. The old examp
 
 ## Failure behavior
 
+Both proxies redirect all hostnames received on port 80 to HTTPS on port 443. The redirect preserves the path and query.
+
 An unknown domain reaches B and fails the TLS handshake if B has no matching certificate. No public certificate is requested for that unknown name. If B is down, its forwarded TLS connections fail. A's own domains still use A's local services.
 
 A known domain with a missing application path returns the application's response. A known domain with an unavailable backend returns a proxy error. Neither case triggers another machine lookup.

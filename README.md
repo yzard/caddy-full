@@ -200,7 +200,7 @@ SSH uses the host's existing accounts, host keys, and authentication. It does no
 
 The SSH client must send its identification bytes first. The standard OpenSSH `ssh` client works. Tools that wait for the server banner, including `ssh-keyscan`, time out on this shared port. Use the host's normal SSH port for those tools.
 
-HTTPS retains local SNI routing and TLS passthrough to B, including certificate validation. Plain HTTP on port 443 goes to Caddy's HTTP listener on port 80. That listener redirects known sites to HTTPS, or returns its existing unknown-domain response. Port 80 continues to serve HTTP normally.
+HTTPS retains local SNI routing and TLS passthrough to B, including certificate validation. Plain HTTP on port 443 goes to Caddy's HTTP listener on port 80. The port 80 catch-all redirects every hostname to HTTPS on port 443, including unknown names. It preserves the path and query and removes any incoming Host port. Unknown names can still fail the TLS handshake after redirection.
 
 When replacing an external splitter, preserve the Caddy configuration and data directories. Move the host mappings for ports 80 and 443 to Caddy Full. Add `SSH_SPLITTER: "true"` and the `extra_hosts` mapping to its service. Stop the old splitter before starting Caddy Full with those host mappings. The two containers cannot bind the same host ports simultaneously.
 

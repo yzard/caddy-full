@@ -39,7 +39,9 @@ The following behavior passed:
 - Unknown domains fail the TLS handshake.
 - Local application 404 responses and backend failures stay on A.
 - An HTTP Host value that differs from TLS SNI receives 421.
-- HTTP redirects preserve the path and query without exposing port 8443.
+- Port 80 redirects known and unknown domains on A and B to HTTPS on port 443.
+- Redirects preserve the path and query and remove incoming Host ports, including 80 and 8080.
+- Plain HTTP on the shared port also redirects unknown names to HTTPS.
 - B downtime does not interrupt A's local service.
 - Recreating B preserves its certificate bytes and restores HTTPS forwarding.
 - Existing user IDs, custom group IDs, and Docker socket access work after privilege changes.

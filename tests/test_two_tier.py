@@ -202,7 +202,7 @@ class TwoTierTest(unittest.TestCase):
                 status, _, headers = self.request(port, "b.caddy-full.test", "/hello?q=1")
                 self.assertEqual(status, 301)
                 self.assertEqual(headers["Location"], "https://b.caddy-full.test/hello?q=1")
-            eventually(lambda: self.assertEqual(self.request(self.port(b, 80), "ready.test")[0], 404))
+            eventually(lambda: self.assertEqual(self.request(self.port(b, 80), "ready.test")[0], 301))
             self.app("app-b", "b", "b.caddy-full.test", "machine-b")
             eventually(lambda: expect("b.caddy-full.test", "machine-b"), timeout=100)
             self.app("app-a", "a", "a.caddy-full.test alias.caddy-full.test:443", "machine-a",
@@ -223,7 +223,11 @@ class TwoTierTest(unittest.TestCase):
             status, _, headers = self.request(self.port(a, 80), "b.caddy-full.test", "/hello?q=1")
             self.assertEqual(status, 301)
             self.assertEqual(headers["Location"], "https://b.caddy-full.test/hello?q=1")
-            self.assertEqual(self.request(self.port(b, 80), "unknown.caddy-full.test")[0], 404)
+            for proxy in [a, b]:
+                for host in ["a.caddy-full.test", "unknown.caddy-full.test", "unknown.caddy-full.test:80", "unknown.caddy-full.test:8080"]:
+                    status, _, headers = self.request(self.port(proxy, 80), host, "/hello?q=1")
+                    self.assertEqual(status, 301)
+                    self.assertEqual(headers["Location"], f"https://{host.split(':')[0]}/hello?q=1")
             print("PASS: unknown TLS fails, application errors stay local, HTTP redirect uses 443", flush=True)
 
             override = self.app("override", "a", "b.caddy-full.test", "machine-a-override")
@@ -268,7 +272,9 @@ class TwoTierTest(unittest.TestCase):
         status, _, headers = self.request(port, "a.caddy-full.test", "/hello")
         self.assertEqual(status, 301)
         self.assertEqual(headers["Location"], "https://a.caddy-full.test/hello")
-        self.assertEqual(self.request(port, "unknown.caddy-full.test")[0], 404)
+        status, _, headers = self.request(port, "unknown.caddy-full.test:443", "/hello?q=1")
+        self.assertEqual(status, 301)
+        self.assertEqual(headers["Location"], "https://unknown.caddy-full.test/hello?q=1")
         with self.assertRaises(ssl.SSLError):
             self.request(port, "unknown.caddy-full.test", context=context)
 

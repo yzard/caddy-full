@@ -80,15 +80,7 @@
 
 # Named sites take precedence over these catch-all routes.
 :80 {
-    {{ if $fallback }}
     redir https://{host}{uri} permanent
-    {{ else }}
-    {{ if $hosts }}
-    @known host {{ join " " $hosts }}
-    redir @known https://{host}{uri} permanent
-    {{ end }}
-    respond "Not Found" 404
-    {{ end }}
 }
 
 :{{ $httpsPort }} {
