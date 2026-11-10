@@ -238,24 +238,23 @@ The test needs Docker, Python 3, OpenSSL, curl with Brotli support, and access t
 
 See [verification details](VERIFICATION.md). Use `docker build` for local builds.
 
-## Automatic publication
+## Publication
 
-Every push to `main` starts the [Docker workflow](.github/workflows/docker-publish.yml). It builds one `linux/amd64` image and runs the integration tests before publication. It then pushes that same image to Docker Hub and GHCR.
+Every push to `main` starts the [Docker workflow](.github/workflows/docker-publish.yml). It builds one `linux/amd64` image and runs the integration tests before publication. It then publishes that tested image only to GHCR.
 
-The workflow publishes four tags:
+GHCR receives `ghcr.io/yzard/caddy-full:YYYYMMDD` and `ghcr.io/yzard/caddy-full:latest`. `YYYYMMDD` uses the date in `America/New_York` when the job selects its tags. Another successful run on the same date replaces that date's tag. Each successful publication updates `latest`. The workflow compares both remote digests after publication.
 
-- `zhuoyin/caddy-full:YYYYMMDD`
-- `zhuoyin/caddy-full:latest`
-- `ghcr.io/yzard/caddy-full:YYYYMMDD`
-- `ghcr.io/yzard/caddy-full:latest`
+GHCR authentication uses the temporary `GITHUB_TOKEN` that GitHub creates automatically for each job, with `packages: write` permission. No manually configured repository secret is required. The workflow does not store or use Docker Hub publishing credentials.
 
-`YYYYMMDD` uses the date in `America/New_York` when the job selects its tags. Another successful run on the same date replaces that date's tag. Each successful publication updates both `latest` tags. The workflow compares all four remote digests after publication.
+The workflow serializes publication runs to prevent concurrent tag updates. It publishes the dated tag before updating `latest`. Manual runs are also available through `workflow_dispatch` on `main`. The old `main` image tag is no longer updated.
 
-The workflow uses the repository secret `DOCKERHUB_TOKEN` for Docker Hub authentication. This secret holds a publishing credential for `zhuoyin`. A Docker Hub access token with write permission is suitable. GHCR uses the automatic `GITHUB_TOKEN` with `packages: write` permission. Keep credentials in GitHub Secrets, outside the repository.
+Docker Hub publication remains separate. On a machine with Docker Hub login credentials, run this command from the repository root:
 
-The workflow serializes publication runs to prevent concurrent tag updates. It publishes both dated tags before updating either `latest` tag. Publication across two registries is not atomic. If a registry push fails, rerun the failed job to complete publication.
+```sh
+./build.sh
+```
 
-Manual runs are also available through `workflow_dispatch` on `main`. The old `main` image tag is no longer updated. `build.sh` remains a manual Docker Hub publishing helper, but normal releases do not require it.
+The script builds and pushes `zhuoyin/caddy-full:YYYYMMDD` and `zhuoyin/caddy-full:latest` using the local Docker login. Its date uses the local machine's timezone. GitHub Actions does not publish these Docker Hub tags. Docker Hub stays at the last manual release until you run `build.sh` again.
 
 ## References
 

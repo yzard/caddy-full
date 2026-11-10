@@ -13,10 +13,6 @@ concurrency:
   group: docker-publish-main
   cancel-in-progress: false
 
-env:
-  DOCKERHUB_IMAGE: zhuoyin/caddy-full
-  DOCKERHUB_USERNAME: zhuoyin
-
 jobs:
   build:
     if: github.ref == 'refs/heads/main'
@@ -34,12 +30,6 @@ jobs:
           set -euo pipefail
           echo "date=$(TZ=America/New_York date +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "ghcr_image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GHCR
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -71,19 +61,17 @@ jobs:
           CADDY_TEST_IMAGE: caddy-full:ci
         run: ./sample/verify-two-tier.sh
 
-      - name: Publish tested image to both registries
+      - name: Publish tested image to GHCR
         env:
           DATE_TAG: ${{ steps.release.outputs.date }}
           GHCR_IMAGE: ${{ steps.release.outputs.ghcr_image }}
         shell: bash
         run: |
           set -euo pipefail
-          # Publish both dated tags before updating either latest tag.
+          # Publish the dated tag before updating latest.
           for tag in "$DATE_TAG" latest; do
-            for repository in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
-              docker tag caddy-full:ci "$repository:$tag"
-              docker push "$repository:$tag"
-            done
+            docker tag caddy-full:ci "$GHCR_IMAGE:$tag"
+            docker push "$GHCR_IMAGE:$tag"
           done
 
       - name: Verify published digests
@@ -94,15 +82,13 @@ jobs:
         run: |
           set -euo pipefail
           expected_digest=""
-          for repository in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
-            for tag in "$DATE_TAG" latest; do
-              reference="$repository:$tag"
-              digest=$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" { print $2; exit }')
-              test -n "$digest"
-              if [ -z "$expected_digest" ]; then
-                expected_digest="$digest"
-              fi
-              test "$digest" = "$expected_digest"
-              printf '%s: %s\n' "$reference" "$digest" >> "$GITHUB_STEP_SUMMARY"
-            done
+          for tag in "$DATE_TAG" latest; do
+            reference="$GHCR_IMAGE:$tag"
+            digest=$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" { print $2; exit }')
+            test -n "$digest"
+            if [ -z "$expected_digest" ]; then
+              expected_digest="$digest"
+            fi
+            test "$digest" = "$expected_digest"
+            printf '%s: %s\n' "$reference" "$digest" >> "$GITHUB_STEP_SUMMARY"
           done

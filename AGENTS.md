@@ -11,8 +11,8 @@
 ## Build, Test, and Development Commands
 - `docker build -t caddy-full .` builds the image locally.
 - `docker-compose -f sample/docker-compose.yml up --build` runs the demo stack.
-- GitHub Actions builds, tests, and publishes dated and `latest` images to Docker Hub and GHCR after each push to `main`.
-- `./build.sh` remains an optional manual Docker Hub publishing helper.
+- GitHub Actions builds, tests, and publishes dated and `latest` images only to GHCR after each push to `main`.
+- `./build.sh` builds and publishes Docker Hub images manually using local Docker login credentials. Do not store Docker Hub credentials in GitHub Secrets.
 
 ## Coding Style & Naming Conventions
 - Shell scripts use POSIX `sh`; keep them minimal and `set -o errexit`/`nounset` friendly.
