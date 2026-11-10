@@ -11,7 +11,8 @@
 ## Build, Test, and Development Commands
 - `docker build -t caddy-full .` builds the image locally.
 - `docker-compose -f sample/docker-compose.yml up --build` runs the demo stack.
-- `./build.sh` builds and pushes versioned and `latest` images (uses `docker buildx build`).
+- GitHub Actions builds, tests, and publishes dated and `latest` images to Docker Hub and GHCR after each push to `main`.
+- `./build.sh` remains an optional manual Docker Hub publishing helper.
 
 ## Coding Style & Naming Conventions
 - Shell scripts use POSIX `sh`; keep them minimal and `set -o errexit`/`nounset` friendly.
@@ -19,7 +20,7 @@
 - Template files follow Caddyfile syntax; keep placeholder names descriptive (e.g., `caddy.0.domain`).
 
 ## Testing Guidelines
-- No automated test suite is present.
+- `./sample/verify-two-tier.sh` runs the Docker integration suite. Set `CADDY_TEST_IMAGE` to select the image under test.
 - Validate changes by running the compose stack and confirming `/etc/caddy/default.d/default.caddy` renders as expected.
 
 ## Commit & Pull Request Guidelines

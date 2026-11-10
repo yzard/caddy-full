@@ -236,7 +236,26 @@ docker build -t caddy-full:two-tier-test .
 
 The test needs Docker, Python 3, OpenSSL, curl with Brotli support, and access to the test container images. It uses Pebble, a local ACME test server, with real TLS-ALPN validation. It creates isolated containers and volumes, then removes them. It does not request public certificates.
 
-See [verification details](VERIFICATION.md). `build.sh` is the existing registry publication script and pushes images. Use `docker build` for local builds.
+See [verification details](VERIFICATION.md). Use `docker build` for local builds.
+
+## Automatic publication
+
+Every push to `main` starts the [Docker workflow](.github/workflows/docker-publish.yml). It builds one `linux/amd64` image and runs the integration tests before publication. It then pushes that same image to Docker Hub and GHCR.
+
+The workflow publishes four tags:
+
+- `zhuoyin/caddy-full:YYYYMMDD`
+- `zhuoyin/caddy-full:latest`
+- `ghcr.io/yzard/caddy-full:YYYYMMDD`
+- `ghcr.io/yzard/caddy-full:latest`
+
+`YYYYMMDD` uses the date in `America/New_York` when the job selects its tags. Another successful run on the same date replaces that date's tag. Each successful publication updates both `latest` tags. The workflow compares all four remote digests after publication.
+
+The workflow uses the repository secret `DOCKERHUB_TOKEN` for Docker Hub authentication. This secret holds a publishing credential for `zhuoyin`. A Docker Hub access token with write permission is suitable. GHCR uses the automatic `GITHUB_TOKEN` with `packages: write` permission. Keep credentials in GitHub Secrets, outside the repository.
+
+The workflow serializes publication runs to prevent concurrent tag updates. It publishes both dated tags before updating either `latest` tag. Publication across two registries is not atomic. If a registry push fails, rerun the failed job to complete publication.
+
+Manual runs are also available through `workflow_dispatch` on `main`. The old `main` image tag is no longer updated. `build.sh` remains a manual Docker Hub publishing helper, but normal releases do not require it.
 
 ## References
 

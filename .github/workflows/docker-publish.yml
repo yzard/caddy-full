@@ -2,54 +2,107 @@ name: Docker
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-publish-main
+  cancel-in-progress: false
 
 env:
-  # Use docker.io for Docker Hub if empty
-  REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
-  IMAGE_NAME: ${{ github.repository }}
-
+  DOCKERHUB_IMAGE: zhuoyin/caddy-full
+  DOCKERHUB_USERNAME: zhuoyin
 
 jobs:
   build:
-
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Login against a Docker registry except on PR
-      # https://github.com/docker/login-action
-      - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@28218f9b04b4f3f62068d7b6ce6ca5b26e35336c
+      - name: Select release tags
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "date=$(TZ=America/New_York date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "ghcr_image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
-          registry: ${{ env.REGISTRY }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Extract metadata (tags, labels) for Docker
-      # https://github.com/docker/metadata-action
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=raw,value=latest
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Build and push Docker image with Buildx (don't push on PR)
-      # https://github.com/docker/build-push-action
-      - name: Build and push Docker image
-        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+      - name: Build release candidate
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          pull: true
+          load: true
+          push: false
+          tags: caddy-full:ci
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test release candidate
+        env:
+          CADDY_TEST_IMAGE: caddy-full:ci
+        run: ./sample/verify-two-tier.sh
+
+      - name: Publish tested image to both registries
+        env:
+          DATE_TAG: ${{ steps.release.outputs.date }}
+          GHCR_IMAGE: ${{ steps.release.outputs.ghcr_image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Publish both dated tags before updating either latest tag.
+          for tag in "$DATE_TAG" latest; do
+            for repository in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
+              docker tag caddy-full:ci "$repository:$tag"
+              docker push "$repository:$tag"
+            done
+          done
+
+      - name: Verify published digests
+        env:
+          DATE_TAG: ${{ steps.release.outputs.date }}
+          GHCR_IMAGE: ${{ steps.release.outputs.ghcr_image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_digest=""
+          for repository in "$DOCKERHUB_IMAGE" "$GHCR_IMAGE"; do
+            for tag in "$DATE_TAG" latest; do
+              reference="$repository:$tag"
+              digest=$(docker buildx imagetools inspect "$reference" | awk '$1 == "Digest:" { print $2; exit }')
+              test -n "$digest"
+              if [ -z "$expected_digest" ]; then
+                expected_digest="$digest"
+              fi
+              test "$digest" = "$expected_digest"
+              printf '%s: %s\n' "$reference" "$digest" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
