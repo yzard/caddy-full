@@ -16,26 +16,166 @@ The demo uses `test1.localhost`, `test2.localhost`, and `test3.localhost`. Its c
 
 ## Two machines
 
-Use the complete [A and B deployment guide](TWO_TIER_SETUP.md). The Compose files are [machine A](sample/two-tier-host1-docker-compose.yml) and [machine B](sample/two-tier-host2-docker-compose.yml).
+A receives public HTTPS traffic. It handles its local domains and forwards other TLS connections to B. B handles its local domains without forwarding back to A.
 
-Both deployment files use `zhuoyin/caddy-full:latest` with `pull_policy: always`. They do not require a local build.
+Both machines use `zhuoyin/caddy-full:latest` from Docker Hub. Neither machine needs the source repository or a local build. The following examples include the proxy and a sample Nginx application on each machine.
 
-A sets `FALLBACK_PROXY` to B's LAN address and port, such as `192.168.1.20:443`. B leaves `FALLBACK_PROXY` unset. Both machines use TLS validation over TCP 443 by default. Their YAML files do not need `TLS_ALPN_ONLY`. B does not need a public port mapping from the router.
-
-Add labels only to the machine that runs the service:
-
-```yaml
-labels:
-  caddy.0.domain: app.example.com
-  caddy.0.port: "8080"
-  caddy.0.tls: admin@example.com
+```text
+https://a.example.com -> A:443 -> rp1's internal HTTPS listener -> app-a:80
+https://b.example.com -> A:443 -> B:443 -> rp2 -> app-b:80
 ```
 
-The email label is optional. Each service must expose its backend port and share a Docker network with its local proxy. The proxy resolves the Docker container name.
+### Prepare the network
 
-Fallback means an unmatched domain. A local application response of 404 or 502 does not trigger fallback. If A and B declare the same domain, A wins. Do not point B back to A.
+1. Point `a.example.com` and `b.example.com` to the public IP of A's router.
+2. Forward public TCP 443 to A's TCP 443.
+3. For HTTP redirects, also forward public TCP 80 to A.
+4. Give B a stable LAN address, such as `192.168.1.20`.
+5. Allow A to connect to B on TCP 443.
+6. Allow both machines to resolve DNS names and make outbound HTTPS connections.
 
-If neither machine has a certificate for the requested domain, the TLS handshake fails. The proxy does not request certificates for arbitrary unknown names. Plain HTTP to an unknown name on the final machine returns 404.
+Certificate validation uses TCP 443 by default. It does not require public TCP 80 or a router forwarding rule directly to B. Any public AAAA record must also lead to a working IPv6 entry point on A.
+
+### Machine A
+
+Save this file as `compose.yaml` in a deployment directory on A. Replace `192.168.1.20` with B's LAN IP. Replace the domain and email with your values.
+
+```yaml
+services:
+  rp1:
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      FALLBACK_PROXY: "192.168.1.20:443"
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "022"
+      TZ: America/New_York
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./caddy-config:/etc/caddy
+      - ./caddy-data:/data
+    networks:
+      - proxy
+
+  app-a:
+    image: nginx:alpine
+    restart: unless-stopped
+    labels:
+      caddy.0.domain: a.example.com
+      caddy.0.port: "80"
+      caddy.0.tls: admin@example.com
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    driver: bridge
+```
+
+`FALLBACK_PROXY` selects B as the destination for domains that A does not handle. A automatically uses internal port 8443 for its local HTTPS listener. You do not need `HTTPS_PORT` in the YAML or a host mapping for port 8443.
+
+### Machine B
+
+Save this file as `compose.yaml` in a deployment directory on B. Replace the domain and email with your values. Leave `FALLBACK_PROXY` unset on B.
+
+```yaml
+services:
+  rp2:
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "022"
+      TZ: America/New_York
+    ports:
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - ./caddy-config:/etc/caddy
+      - ./caddy-data:/data
+    networks:
+      - proxy
+
+  app-b:
+    image: nginx:alpine
+    restart: unless-stopped
+    labels:
+      caddy.0.domain: b.example.com
+      caddy.0.port: "80"
+      caddy.0.tls: admin@example.com
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    driver: bridge
+```
+
+The `proxy` network exists separately on each machine. Each application shares a Docker network with its local proxy. A reaches B through its LAN IP, without a shared Docker network or Docker socket.
+
+### Start and update
+
+On each machine, run this command beside its `compose.yaml`:
+
+```sh
+docker compose up -d
+```
+
+`pull_policy: always` makes Compose pull the current proxy image when this command runs. Run the same command again to apply a newer image. Certificate and configuration directories remain mounted across container recreation.
+
+On A, read the proxy logs:
+
+```sh
+docker compose logs -f rp1
+```
+
+On B, read the proxy and certificate logs:
+
+```sh
+docker compose logs -f rp2
+```
+
+### Certificate issuance
+
+ACME is the protocol Caddy uses to obtain certificates. A certificate authority, such as Let's Encrypt, verifies domain control before issuing a certificate. TLS-ALPN-01 performs that verification through a special TLS handshake on TCP 443.
+
+For `b.example.com`, the process is:
+
+1. B's docker-gen reads the `app-b` labels and generates a Caddy site for `b.example.com`.
+2. B's rp2 contacts the certificate authority over outbound HTTPS and requests a certificate for that name.
+3. The authority resolves `b.example.com` through public DNS and connects to port 443, which reaches A.
+4. A's rp1 reads the domain from the TLS handshake and finds no matching local site.
+5. rp1 forwards the original encrypted validation connection to B's rp2, which answers the challenge.
+6. After successful validation, rp2 downloads and stores the certificate and its private key under `/data/caddy`.
+
+rp2 does not need to know about rp1. Public DNS and A's `FALLBACK_PROXY` route the authority's validation connection to B. The outbound certificate request uses B's normal network route. It only travels through A if A is separately configured as B's network gateway.
+
+For `a.example.com`, rp1 requests its own certificate. A forwards its validation connection to its own internal HTTPS listener instead of B. Each proxy stores and automatically renews its own certificates. Renewal requires the same network path to remain available.
+
+`TLS_ALPN_ONLY` defaults to `true` on both machines, so the YAML examples omit it. This disables HTTP validation on port 80 and selects TLS validation on port 443. It controls certificate validation, not whether the proxy acts as a gateway.
+
+The `caddy.0.tls` email label is optional. B's service labels stay on B, and its certificate and private key stay on B. Neither labels nor certificates need to be copied to A.
+
+The `./caddy-data:/data` mount preserves certificates and ACME account keys. The separate `./caddy-config:/etc/caddy` mount preserves custom site snippets. Keep both directories when updating the containers.
+
+### Request routing
+
+For a normal request to `https://b.example.com`, rp1 forwards the TLS connection to rp2. rp2 presents its certificate, decrypts the request, and proxies it over HTTP to `app-b:80`. The response returns through rp2 and rp1 to the client. rp1 does not decrypt B's HTTPS traffic.
+
+Fallback means an unmatched domain. A local application response of 404 or 502 does not trigger fallback. If both machines declare the same domain, A wins and B cannot complete new validation for that domain through A. Do not point B back to A.
+
+If neither machine has a certificate for a requested domain, the TLS handshake fails. The proxies do not request certificates for arbitrary unknown names. If B is unavailable, A's local services remain available.
+
+To add a service, create its DNS record and labels only on the machine that runs it. Set `caddy.N.port` to the application's internal listening port. If the image does not expose that port, add Compose `expose`. Docker events update the routes automatically.
+
+See the [deployment guide](TWO_TIER_SETUP.md) for migration notes and custom snippets. Download the sample files for [machine A](sample/two-tier-host1-docker-compose.yml) and [machine B](sample/two-tier-host2-docker-compose.yml).
 
 ## Configuration
 
@@ -50,7 +190,6 @@ If neither machine has a certificate for the requested domain, the TLS handshake
 - `UMASK`: optional file creation mask, such as `022`.
 - `TZ`: optional timezone, such as `America/New_York`.
 
-ACME is the protocol Caddy uses to obtain certificates. TLS-ALPN-01 validates domain control through a special TLS handshake on port 443.
 
 ## Labels
 
