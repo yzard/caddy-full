@@ -1,8 +1,8 @@
 # Run on A. Set FALLBACK_HOST to B's LAN address before starting Compose.
 services:
   rp1:
-    build: ..
-    image: caddy-full:local
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       FALLBACK_PROXY: ${FALLBACK_HOST:?Set FALLBACK_HOST to B's LAN address}:443

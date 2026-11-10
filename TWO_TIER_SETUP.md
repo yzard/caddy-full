@@ -1,6 +1,6 @@
 # Deploy on A and B
 
-A receives public TCP 443 traffic. B receives forwarded TLS connections from A. Both machines run Caddy Full and discover labels from their own Docker daemon.
+A receives public TCP 443 traffic. B receives forwarded TLS connections from A. Both machines run Caddy Full and discover labels from their own Docker daemon. The examples pull `zhuoyin/caddy-full:latest` from Docker Hub. Neither machine needs the source repository or a local image build.
 
 ```text
 Internet TCP 443 -> A
@@ -17,13 +17,13 @@ Give B a stable LAN address, such as `192.168.1.20`. Allow A to reach B on TCP 4
 
 ## Machine A
 
-Save this file as `compose.yaml` in the repository root on A. Replace `192.168.1.20` with B's LAN IP. Replace the domain and email with your values.
+Save this file as `compose.yaml` in a deployment directory on A. Replace `192.168.1.20` with B's LAN IP. Replace the domain and email with your values.
 
 ```yaml
 services:
   rp1:
-    build: .
-    image: caddy-full:local
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       FALLBACK_PROXY: "192.168.1.20:443"
@@ -60,13 +60,13 @@ A selects internal port 8443 automatically when `FALLBACK_PROXY` is set. You do 
 
 ## Machine B
 
-Save this file as `compose.yaml` in the repository root on B. Replace the domain and email with your values. Do not set `FALLBACK_PROXY` on B.
+Save this file as `compose.yaml` in a deployment directory on B. Replace the domain and email with your values. Do not set `FALLBACK_PROXY` on B.
 
 ```yaml
 services:
   rp2:
-    build: .
-    image: caddy-full:local
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       PUID: "1000"
@@ -104,8 +104,10 @@ The router does not forward public traffic directly to B. B publishes TCP 443 on
 On each machine, run this command beside its `compose.yaml`:
 
 ```sh
-docker compose up --build -d
+docker compose up -d
 ```
+
+`pull_policy: always` makes Compose pull the current proxy image when you run `docker compose up -d`. Run that command again to apply a newer image. Existing certificate and configuration directories remain mounted.
 
 On B, read the certificate logs:
 

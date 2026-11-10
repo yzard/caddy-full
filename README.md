@@ -18,6 +18,8 @@ The demo uses `test1.localhost`, `test2.localhost`, and `test3.localhost`. Its c
 
 Use the complete [A and B deployment guide](TWO_TIER_SETUP.md). The Compose files are [machine A](sample/two-tier-host1-docker-compose.yml) and [machine B](sample/two-tier-host2-docker-compose.yml).
 
+Both deployment files use `zhuoyin/caddy-full:latest` with `pull_policy: always`. They do not require a local build.
+
 A sets `FALLBACK_PROXY` to B's LAN address and port, such as `192.168.1.20:443`. B leaves `FALLBACK_PROXY` unset. Both machines use TLS validation over TCP 443 by default. Their YAML files do not need `TLS_ALPN_ONLY`. B does not need a public port mapping from the router.
 
 Add labels only to the machine that runs the service:

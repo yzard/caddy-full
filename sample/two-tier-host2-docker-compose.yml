@@ -1,8 +1,8 @@
 # Run on B. Allow A to reach TCP 443 through B's firewall.
 services:
   rp2:
-    build: ..
-    image: caddy-full:local
+    image: zhuoyin/caddy-full:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       PUID: ${PUID:-1000}
