@@ -49,7 +49,7 @@ RUN xcaddy build v${CADDY_VERSION} \
 
 
 # start build actual image
-FROM alpine:3.22 AS main
+FROM alpine:3.24 AS main
 
 COPY --from=caddy_bundle /usr/bin/caddy /usr/bin/caddy
 COPY --from=forego /usr/local/bin/forego /usr/local/bin/forego
