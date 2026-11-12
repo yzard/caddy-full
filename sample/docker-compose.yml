@@ -3,6 +3,9 @@ services:
     build: ..
     image: caddy-full:local
     restart: unless-stopped
+    # To forward Syncthing on TCP 443, add this label to the proxy:
+    # labels:
+    #   bep_host_port: "syncthing:22000"
     environment:
       FALLBACK_PROXY: ${FALLBACK_PROXY:-}
       PUID: ${PUID:-1000}

@@ -206,12 +206,29 @@ When replacing an external splitter, preserve the Caddy configuration and data d
 
 See the upstream [SSH matcher](https://github.com/mholt/caddy-l4/blob/v0.1.2/docs/matchers/ssh.md) and [HTTP matcher](https://github.com/mholt/caddy-l4/blob/v0.1.2/docs/matchers/http.md) documentation.
 
+## Syncthing on the HTTPS port
+
+Add this label to the Caddy Full service on machine B. Use the Syncthing container name and its TCP sync port.
+
+```yaml
+labels:
+  bep_host_port: "syncthing:22000"
+```
+
+Connect the proxy and Syncthing to a shared Docker network. Set the remote device address in Syncthing to `tcp://sync.example.com:443`, where the domain points to A.
+
+B reads `bep_host_port` from its own container. It checks for `bep/1.0` in ALPN, the protocol list in the TLS handshake, before it checks domain names. It forwards matching TCP connections to Syncthing with TLS intact. B sends other HTTPS connections to its web listener.
+
+A can use its existing TLS fallback if it has no local route for the connection. Keep the Syncthing web domain on B if you also proxy the management interface. A regular `caddy.0.domain` and `caddy.0.port: "8384"` on the Syncthing container can serve that interface.
+
+Each proxy supports one BEP destination on TCP 443. Clients must advertise `bep/1.0` for this route. Recreate the proxy after you change its label.
+
 ## Configuration
 
 - `SSH_SPLITTER`: `true` enables SSH, HTTP, and HTTPS on TCP 443. The default is `false`.
 - `SSH_PROXY`: SSH destination as `host:port`, with `host.docker.internal:22` as the default. Used only when splitting is enabled.
 - `FALLBACK_PROXY`: next machine as `host:port`, without a URL scheme. An empty value disables forwarding.
-- `HTTPS_PORT`: optional override for the local Caddy HTTPS port. Leave it unset for the standard deployment. It defaults to `8443` when fallback or SSH splitting is enabled, and `443` otherwise. Layer 4 reserves TCP 443 when either feature is enabled.
+- `HTTPS_PORT`: optional override for the local Caddy HTTPS port. Leave it unset for the standard deployment. It defaults to `8443` when fallback, SSH splitting, or BEP forwarding is enabled, and `443` otherwise.
 - `TLS_ALPN_ONLY`: `true` selects ACME validation over TLS on port 443. It defaults to `true`, including when the value is empty. Set it to `false` to also enable HTTP validation on port 80.
 - `LOCAL_DOMAINS`: space-separated domains from hand-written `conf.d` sites that A must handle locally. This does not create sites or certificates.
 - `CADDY_INSTANCE`: optional label scope when several proxies use one Docker daemon. Matching services require `caddy.instance` with the same value.

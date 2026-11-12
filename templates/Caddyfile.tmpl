@@ -1,7 +1,31 @@
 {{- $fallback := env "FALLBACK_PROXY" -}}
 {{- $sshSplitter := eq (env "SSH_SPLITTER") "true" -}}
-{{- $layer4 := or $fallback $sshSplitter -}}
-{{- $httpsPort := env "HTTPS_PORT" | default "443" -}}
+{{- $bepTarget := "" -}}
+{{- $selfID := env "CADDY_SELF_ID" -}}
+{{- $selfFound := false -}}
+{{- range $ -}}
+  {{- if and $selfID (eq .ID $selfID) -}}
+    {{- $selfFound = true -}}
+    {{- $bepTarget = index .Labels "bep_host_port" | default "" -}}
+  {{- end -}}
+{{- end -}}
+{{- if and $selfID (not $selfFound) -}}
+  {{- fail "Waiting for the proxy container to appear in Docker" -}}
+{{- end -}}
+{{- if $bepTarget -}}
+  {{- if not (regexMatch "^[a-zA-Z0-9._-]+:[0-9]{1,5}$|^\\[[0-9a-fA-F:]+\\]:[0-9]{1,5}$" $bepTarget) -}}
+    {{- fail "bep_host_port must be a host:port address" -}}
+  {{- end -}}
+  {{- $port := atoi (last (splitList ":" $bepTarget)) -}}
+  {{- if or (lt $port 1) (gt $port 65535) -}}
+    {{- fail "bep_host_port must use a port between 1 and 65535" -}}
+  {{- end -}}
+{{- end -}}
+{{- $layer4 := or $fallback $sshSplitter $bepTarget -}}
+{{- $httpsPort := env "HTTPS_PORT" | default (ternary "8443" "443" (not (empty $layer4))) -}}
+{{- if and $layer4 (eq (atoi $httpsPort) 443) -}}
+  {{- fail "Layer 4 reserves port 443. Leave HTTPS_PORT unset or use a different internal port." -}}
+{{- end -}}
 {{- $instance := env "CADDY_INSTANCE" -}}
 {{- $containers := $ -}}
 {{- if $instance -}}
@@ -48,6 +72,12 @@
             @ssh ssh
             route @ssh {
                 proxy {{ env "SSH_PROXY" }}
+            }
+            {{ end }}
+            {{ if $bepTarget }}
+            @bep tls alpn bep/1.0
+            route @bep {
+                proxy {{ $bepTarget }}
             }
             {{ end }}
             {{ if $fallback }}

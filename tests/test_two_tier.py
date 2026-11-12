@@ -93,7 +93,7 @@ class TwoTierTest(unittest.TestCase):
             "--label", f"caddy.0.domain={domain}", "--label", "caddy.0.port=80", *extra,
         ], image="nginx:1.28-alpine", command=["-c", f"echo {content} > /usr/share/nginx/html/index.html; exec nginx -g 'daemon off;'"])
 
-    def proxy(self, name, fallback=None, acme=False, ssh_proxy=None):
+    def proxy(self, name, fallback=None, acme=False, ssh_proxy=None, extra=()):
         volume = self.prefix + "-" + name + "-data"
         if volume not in self.volumes:
             self.volumes.append(volume)
@@ -115,7 +115,7 @@ class TwoTierTest(unittest.TestCase):
         if name == "a":
             for domain in ["a.caddy-full.test", "alias.caddy-full.test", "b.caddy-full.test"]:
                 args += ["--network-alias", domain]
-        return self.start(name, args)
+        return self.start(name, [*args, *extra])
 
     def ssh_backend(self):
         # A protocol fixture tests byte preservation without a host SSH dependency.
@@ -177,6 +177,51 @@ class TwoTierTest(unittest.TestCase):
 
     def test_certificate_relay_and_dynamic_routes(self):
         self.certificate_relay_and_dynamic_routes(ssh_splitter=False)
+
+    def test_bep_label_on_fallback_proxy(self):
+        _, https_context = self.start_ca()
+        cert = self.directory / "api.pem"
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(str(cert), str(self.directory / "api.key"))
+        server_context.set_alpn_protocols(["bep/1.0"])
+
+        class BEPBackend(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.settimeout(5)
+                with server_context.wrap_socket(self.request, server_side=True) as conn:
+                    conn.sendall(conn.recv(1024))
+
+        backend = socketserver.ThreadingTCPServer(("0.0.0.0", 0), BEPBackend)
+        backend.daemon_threads = True
+        threading.Thread(target=backend.serve_forever, daemon=True).start()
+        self.addCleanup(backend.server_close)
+        self.addCleanup(backend.shutdown)
+        target = f"host.docker.internal:{backend.server_address[1]}"
+        b = self.proxy("b", acme=True, extra=[
+            "--hostname", "custom-b", "--add-host", "host.docker.internal:host-gateway",
+            "--label", f"bep_host_port={target}",
+        ])
+        a = self.proxy("a", fallback=b, acme=True)
+        self.app("web-b", "b", "b.caddy-full.test", "web-b",
+                 extra=["--label", "bep_host_port=invalid"])
+        port = self.port(a, 443)
+        eventually(lambda: self.assertEqual(
+            self.request(port, "b.caddy-full.test", context=https_context)[:2],
+            (200, "web-b\n"),
+        ))
+        self.assertNotIn("@bep", docker("exec", a, "cat", "/etc/caddy/default.d/default.caddy"))
+
+        bep_context = ssl.create_default_context(cafile=str(cert))
+        bep_context.check_hostname = False
+        bep_context.set_alpn_protocols(["bep/1.0"])
+        # Native Syncthing connections can arrive without a TLS server name.
+        for server_name in (None, "b.caddy-full.test"):
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as raw:
+                with bep_context.wrap_socket(raw, server_hostname=server_name) as conn:
+                    self.assertEqual(conn.selected_alpn_protocol(), "bep/1.0")
+                    conn.sendall(b"\x00bep-test\xff")
+                    with conn.makefile("rb") as stream:
+                        self.assertEqual(stream.read(), b"\x00bep-test\xff")
 
     def test_ssh_splitter_with_certificate_relay(self):
         self.certificate_relay_and_dynamic_routes(ssh_splitter=True)

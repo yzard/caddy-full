@@ -24,22 +24,18 @@ if [ "$SSH_SPLITTER" = true ]; then
     fi
 fi
 
-# Layer 4 owns public port 443 when either forwarding feature is enabled.
-if [ -n "${FALLBACK_PROXY:-}" ] || [ "$SSH_SPLITTER" = true ]; then
-    HTTPS_PORT="${HTTPS_PORT:-8443}"
-else
-    HTTPS_PORT="${HTTPS_PORT:-443}"
-fi
-case "$HTTPS_PORT" in
-    *[!0-9]*|'') echo "HTTPS_PORT must be a port number" >&2; exit 1 ;;
-esac
-if [ "$HTTPS_PORT" -lt 1 ] || [ "$HTTPS_PORT" -gt 65535 ] || [ "$HTTPS_PORT" -eq 80 ]; then
-    echo "HTTPS_PORT must be between 1 and 65535 and different from 80" >&2
-    exit 1
-fi
-if { [ -n "${FALLBACK_PROXY:-}" ] || [ "$SSH_SPLITTER" = true ]; } && [ "$HTTPS_PORT" -eq 443 ]; then
-    echo "Layer 4 reserves port 443. Leave HTTPS_PORT unset or use a different internal port." >&2
-    exit 1
+if [ -n "${HTTPS_PORT:-}" ]; then
+    case "$HTTPS_PORT" in
+        *[!0-9]*) echo "HTTPS_PORT must be a port number" >&2; exit 1 ;;
+    esac
+    if [ "$HTTPS_PORT" -lt 1 ] || [ "$HTTPS_PORT" -gt 65535 ] || [ "$HTTPS_PORT" -eq 80 ]; then
+        echo "HTTPS_PORT must be between 1 and 65535 and different from 80" >&2
+        exit 1
+    fi
+    if { [ -n "${FALLBACK_PROXY:-}" ] || [ "$SSH_SPLITTER" = true ]; } && [ "$HTTPS_PORT" -eq 443 ]; then
+        echo "Layer 4 reserves port 443. Leave HTTPS_PORT unset or use a different internal port." >&2
+        exit 1
+    fi
 fi
 case "${FALLBACK_PROXY:-}" in
     *://*|*[[:space:]]*) echo "FALLBACK_PROXY must be a host:port address without a scheme or whitespace" >&2; exit 1 ;;
@@ -50,6 +46,14 @@ case "$TLS_ALPN_ONLY" in
     *) echo "TLS_ALPN_ONLY must be true or false" >&2; exit 1 ;;
 esac
 export HTTPS_PORT TLS_ALPN_ONLY SSH_SPLITTER SSH_PROXY
+
+# Docker bind-mounts this container's hostname file from its metadata directory.
+# Use the ID from that mount so a custom hostname cannot select another container.
+CADDY_SELF_ID="$(awk '$5 == "/etc/hostname" && $4 ~ /\/containers\/[0-9a-f]+\/hostname$/ {
+    count = split($4, parts, "/")
+    print parts[count - 1]
+}' /proc/self/mountinfo)"
+export CADDY_SELF_ID
 
 # Optional runtime settings (host-friendly permissions, TZ, umask).
 if [ -n "${TZ:-}" ] && [ -e "/usr/share/zoneinfo/${TZ}" ]; then
@@ -114,7 +118,24 @@ cp /code/caddy/Caddyfile /etc/caddy/Caddyfile
 mkdir -p /etc/caddy/conf.d
 
 mkdir -p /etc/caddy/default.d
-docker-gen -only-exposed /code/templates/Caddyfile.tmpl /etc/caddy/default.d/default.caddy
+# Docker can start the entrypoint before it lists this container as running.
+# Render to a fresh file so a failed render cannot reuse an old configuration.
+generated_dir="$(mktemp -d)"
+trap 'rm -rf "$generated_dir"' EXIT
+for attempt in 1 2 3 4 5; do
+    if docker-gen -only-exposed /code/templates/Caddyfile.tmpl "$generated_dir/default.caddy" &&
+        [ -s "$generated_dir/default.caddy" ]; then
+        break
+    fi
+    if [ "$attempt" -eq 5 ]; then
+        echo "Failed to generate the Caddy configuration" >&2
+        exit 1
+    fi
+    sleep 1
+done
+mv "$generated_dir/default.caddy" /etc/caddy/default.d/default.caddy
+rmdir "$generated_dir"
+trap - EXIT
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 # Generated files must remain writable after the privilege drop.
 if [ -n "${PUID:-}" ] || [ -n "${PGID:-}" ]; then
