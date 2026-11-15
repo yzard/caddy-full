@@ -242,14 +242,16 @@ Each proxy supports one BEP destination on TCP 443. Clients must advertise `bep/
 ## Labels
 
 - `caddy.N.domain`: site names separated by spaces or commas. Use bare DNS names for two-machine routing.
-- `caddy.N.port`: backend container port, with `80` as the default.
-- `caddy.N.paths`: comma-separated `path:port` pairs, such as `api:8081,media:8082`. Paths keep their prefixes.
+- `caddy.N.port`: backend container port for sites without `paths`. The default is `80`.
+- `caddy.N.paths`: comma-separated `path:port` pairs, such as `api:8081,media:8082`. Caddy keeps each path prefix. For other paths on that site, Caddy closes the connection without an HTTP response.
 - `caddy.N.rewrite`: optional Caddy rewrite arguments.
 - `caddy.N.tls`: optional Caddy TLS arguments, such as an ACME email or `internal` for local tests.
 
 Replace `N` with `0`, `1`, or another index for each site block. Single-machine configurations also accept explicit site ports. A wildcard site requires a wildcard certificate, normally through DNS validation. Wildcard DNS records alone do not require wildcard certificates.
 
-For apps on one hostname, give each container the same `caddy.N.domain` and its own `caddy.N.paths` label. Caddy groups them into one site and forwards each matching path to the container that declared it. Each member of a shared site must declare paths, and overlapping path prefixes use the more specific match first. Exact duplicate paths and conflicting explicit TLS values are configuration errors. Requests outside the declared paths return 404.
+For apps on one hostname, give each container the same `caddy.N.domain` and its own `caddy.N.paths` label. Caddy groups them into one site and forwards each matching path to the container that declared it. Each member of a shared site must declare paths. Caddy uses the more specific match first when path prefixes overlap. Exact duplicate paths and conflicting explicit TLS values are configuration errors.
+
+An HTTPS request that completes TLS and reaches the catch-all site returns 404. An unknown domain without a matching certificate can fail before Caddy reads the request.
 
 ## Generated files and state
 

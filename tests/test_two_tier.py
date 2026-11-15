@@ -253,7 +253,8 @@ class TwoTierTest(unittest.TestCase):
                 self.request(port, domain, path, context)[:2], (200, f"{backend}:{path}")
             ))
         for path in ("/", "/invoice-other", "/login.html"):
-            self.assertEqual(self.request(port, domain, path, context)[0], 404)
+            with self.assertRaises(http.client.RemoteDisconnected):
+                self.request(port, domain, path, context)
         config = docker("exec", proxy, "cat", "/etc/caddy/default.d/default.caddy")
         self.assertEqual(config.count(domain + " {"), 1)
 
@@ -285,16 +286,19 @@ class TwoTierTest(unittest.TestCase):
             self.app("app-b", "b", "b.caddy-full.test", "machine-b")
             eventually(lambda: expect("b.caddy-full.test", "machine-b"), timeout=100)
             self.app("app-a", "a", "a.caddy-full.test alias.caddy-full.test:443", "machine-a",
-                     ["--label", "caddy.0.paths=foo:81", "--label", "caddy.0.tls=admin@example.com"])
-            eventually(lambda: expect("a.caddy-full.test", "machine-a"))
-            eventually(lambda: expect("alias.caddy-full.test", "machine-a"))
+                     ["--label", "caddy.0.paths=foo:80,unavailable:81", "--label", "caddy.0.tls=admin@example.com"])
+            eventually(lambda: expect("a.caddy-full.test", None, "/foo", 404))
+            eventually(lambda: expect("alias.caddy-full.test", None, "/foo", 404))
             eventually(lambda: expect("b.caddy-full.test", "machine-b"))
             for proxy in [a, b]:
                 self.assertIn('"challenge_type":"tls-alpn-01"', docker("logs", proxy))
                 self.assertNotIn('"challenge_type":"http-01"', docker("logs", proxy))
             print("\nPASS: A and B obtained trusted certificates through public A:443", flush=True)
-            expect("a.caddy-full.test", None, "/missing", 404)
-            expect("a.caddy-full.test", None, "/foo", 502)
+            for path in ("/", "/missing", "/foo-other"):
+                with self.assertRaises(http.client.RemoteDisconnected):
+                    self.request(port, "a.caddy-full.test", path, context)
+            expect("a.caddy-full.test", None, "/unavailable", 502)
+            expect("b.caddy-full.test", None, "/missing", 404)
             status, _, _ = self.request(port, "a.caddy-full.test", context=context, host="b.caddy-full.test")
             self.assertEqual(status, 421)
             with self.assertRaises(ssl.SSLError):
@@ -319,7 +323,7 @@ class TwoTierTest(unittest.TestCase):
 
             before = docker("exec", b, "sh", "-c", "find /data/caddy/certificates -name '*.crt' -exec sha256sum {} ';'")
             docker("stop", "-t", "5", b)
-            expect("a.caddy-full.test", "machine-a")
+            expect("a.caddy-full.test", None, "/foo", 404)
             if ssh_splitter:
                 self.assert_ssh(port)
             with self.assertRaises(OSError):

@@ -183,7 +183,7 @@
         @path{{ $index }} path /{{ $path }}/* /{{ $path }}
         reverse_proxy @path{{ $index }} {{ $name }}:{{ $pathPort }}
       {{ end }}
-        reverse_proxy {{ $name }}:{{ $port }}
+        abort
     }
     {{ else }}
     reverse_proxy {{ $name }}:{{ $port }}
@@ -220,7 +220,7 @@
             reverse_proxy {{ $route.name }}:{{ $route.port }}
         }
       {{ end }}
-        respond "Not Found" 404
+        abort
     }
     {{ end }}
 }
