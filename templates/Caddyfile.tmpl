@@ -124,7 +124,7 @@
     {{ if not (and (hasPrefix "caddy." $label) (hasSuffix ".domain" $label)) }}{{ continue }}{{ end }}
     {{ $idx := trimSuffix ".domain" (trimPrefix "caddy." $label) }}
     {{ $base := print "caddy." $idx "." }}
-    {{ $port := index $container.Labels (print $base "port") | default "80" }}
+    {{ $port := index $container.Labels (print $base "port") | default "" }}
     {{ $tls := index $container.Labels (print $base "tls") }}
     {{ $rewrite := index $container.Labels (print $base "rewrite") }}
     {{ $paths := index $container.Labels (print $base "paths") }}
@@ -183,14 +183,23 @@
         @path{{ $index }} path /{{ $path }}/* /{{ $path }}
         reverse_proxy @path{{ $index }} {{ $name }}:{{ $pathPort }}
       {{ end }}
+      {{ if $port }}
+        reverse_proxy {{ $name }}:{{ $port }}
+      {{ else }}
         abort
+      {{ end }}
     }
     {{ else }}
-    reverse_proxy {{ $name }}:{{ $port }}
+    reverse_proxy {{ $name }}:{{ $port | default "80" }}
     {{ end }}
     {{ else }}
       {{ $byPath := dict }}
+      {{ $defaultRoute := dict }}
       {{ range $route := $routes }}
+        {{ if $route.port }}
+          {{ if $defaultRoute }}{{ fail (printf "Shared site %s has more than one default backend port" $site) }}{{ end }}
+          {{ $defaultRoute = $route }}
+        {{ end }}
         {{ if not $route.paths }}
           {{ fail (printf "Shared site %s requires caddy.N.paths on %s" $site $route.name) }}
         {{ end }}
@@ -220,7 +229,14 @@
             reverse_proxy {{ $route.name }}:{{ $route.port }}
         }
       {{ end }}
+      {{ if $defaultRoute }}
+        handle {
+            {{ if $defaultRoute.rewrite }}rewrite {{ $defaultRoute.rewrite }}{{ end }}
+            reverse_proxy {{ $defaultRoute.name }}:{{ $defaultRoute.port }}
+        }
+      {{ else }}
         abort
+      {{ end }}
     }
     {{ end }}
 }

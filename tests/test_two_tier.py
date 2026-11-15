@@ -90,7 +90,7 @@ class TwoTierTest(unittest.TestCase):
     def app(self, name, instance, domain, content, extra=()):
         return self.start(name, [
             "--entrypoint", "sh", "--label", f"caddy.instance={self.prefix}-{instance}",
-            "--label", f"caddy.0.domain={domain}", "--label", "caddy.0.port=80", *extra,
+            "--label", f"caddy.0.domain={domain}", *extra,
         ], image="nginx:1.28-alpine", command=["-c", f"echo {content} > /usr/share/nginx/html/index.html; exec nginx -g 'daemon off;'"])
 
     def proxy(self, name, fallback=None, acme=False, ssh_proxy=None, extra=()):
@@ -223,8 +223,37 @@ class TwoTierTest(unittest.TestCase):
                     with conn.makefile("rb") as stream:
                         self.assertEqual(stream.read(), b"\x00bep-test\xff")
 
+    def test_path_site_with_explicit_fallback(self):
+        domain = "media.localhost"
+        config = (
+            'server { listen 5055; location / { return 200 "root:$request_uri"; } } '
+            'server { listen 8096; location / { return 200 "media:$request_uri"; } }'
+        )
+        self.start("media-app", [
+            "--entrypoint", "sh",
+            "--label", f"caddy.instance={self.prefix}-media",
+            "--label", f"caddy.0.domain={domain}",
+            "--label", "caddy.0.tls=internal",
+            "--label", "caddy.0.port=5055",
+            "--label", "caddy.0.paths=jellyfin:8096",
+        ], image="nginx:1.28-alpine", command=[
+            "-c", f"printf '%s' '{config}' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'",
+        ])
+        proxy = self.proxy("media")
+        port = self.port(proxy, 443)
+        context = ssl._create_unverified_context()
+        for path, backend in (
+            ("/", "root"), ("/api/v1/status", "root"),
+            ("/jellyfin", "media"), ("/jellyfin/web/", "media"),
+            ("/jellyfin-other", "root"),
+        ):
+            eventually(lambda: self.assertEqual(
+                self.request(port, domain, path, context)[:2], (200, f"{backend}:{path}")
+            ))
+
     def test_shared_hostname_routes_each_path_to_its_container(self):
         domain = "shared.caddy-full.test"
+        fallback_domain = "shared-with-default.localhost"
         for name, paths in (
             ("finance", "invoice:80"),
             ("manager", "download_manager:80,invoice/archive:80"),
@@ -236,6 +265,10 @@ class TwoTierTest(unittest.TestCase):
                 "--label", f"caddy.0.domain={domain}",
                 "--label", "caddy.0.tls=internal",
                 "--label", f"caddy.0.paths={paths}",
+                "--label", f"caddy.1.domain={fallback_domain}",
+                "--label", "caddy.1.tls=internal",
+                "--label", f"caddy.1.paths={paths}",
+                *(["--label", "caddy.1.port=80"] if name == "finance" else []),
             ], image="nginx:1.28-alpine", command=[
                 "-c", f"printf '%s' '{config}' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'",
             ])
@@ -255,6 +288,9 @@ class TwoTierTest(unittest.TestCase):
         for path in ("/", "/invoice-other", "/login.html"):
             with self.assertRaises(http.client.RemoteDisconnected):
                 self.request(port, domain, path, context)
+        for path, backend in (("/", "finance"), ("/download_manager/status", "manager")):
+            self.assertEqual(self.request(port, fallback_domain, path, context)[:2],
+                             (200, f"{backend}:{path}"))
         config = docker("exec", proxy, "cat", "/etc/caddy/default.d/default.caddy")
         self.assertEqual(config.count(domain + " {"), 1)
 
