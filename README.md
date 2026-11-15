@@ -249,6 +249,8 @@ Each proxy supports one BEP destination on TCP 443. Clients must advertise `bep/
 
 Replace `N` with `0`, `1`, or another index for each site block. Single-machine configurations also accept explicit site ports. A wildcard site requires a wildcard certificate, normally through DNS validation. Wildcard DNS records alone do not require wildcard certificates.
 
+For apps on one hostname, give each container the same `caddy.N.domain` and its own `caddy.N.paths` label. Caddy groups them into one site and forwards each matching path to the container that declared it. Each member of a shared site must declare paths, and overlapping path prefixes use the more specific match first. Exact duplicate paths and conflicting explicit TLS values are configuration errors. Requests outside the declared paths return 404.
+
 ## Generated files and state
 
 `docker-gen` watches Docker and renders global options and all label routes into one file: `/etc/caddy/default.d/default.caddy`. It reloads Caddy after a change. This keeps the TLS route table and application routes in the same snapshot. Caddy rejects invalid reloads and keeps its active configuration.

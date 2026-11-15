@@ -117,6 +117,7 @@
     respond "Not Found" 404
 }
 
+{{ $routesBySite := dict }}
 {{ range $container := $containers }}
   {{ $name := $container.Name }}
   {{ range $label, $val := $container.Labels }}
@@ -127,7 +128,6 @@
     {{ $tls := index $container.Labels (print $base "tls") }}
     {{ $rewrite := index $container.Labels (print $base "rewrite") }}
     {{ $paths := index $container.Labels (print $base "paths") }}
-    {{ $sites := list }}
     {{ range $site := regexSplit "[\\s,]+" (trim $val) -1 }}
       {{ if $site }}
         {{ if $layer4 }}
@@ -136,10 +136,25 @@
           {{ end }}
           {{ $site = trimSuffix ":443" $site }}
         {{ end }}
-        {{ $sites = append $sites $site }}
+        {{ $routes := get $routesBySite $site | default (list) }}
+        {{ $route := dict "name" $name "port" $port "tls" $tls "rewrite" $rewrite "paths" $paths }}
+        {{ $_ := set $routesBySite $site (append $routes $route) }}
       {{ end }}
     {{ end }}
-{{ join " " $sites }} {
+  {{ end }}
+{{ end }}
+
+{{ range $site, $routes := $routesBySite }}
+  {{ $tls := "" }}
+  {{ range $route := $routes }}
+    {{ if $route.tls }}
+      {{ if and $tls (ne $tls $route.tls) }}
+        {{ fail (printf "Conflicting TLS labels for %s" $site) }}
+      {{ end }}
+      {{ $tls = $route.tls }}
+    {{ end }}
+  {{ end }}
+{{ $site }} {
     log {
         output stdout
     }
@@ -152,7 +167,12 @@
         }
     }
     {{ else if $tls }}tls {{ $tls }}{{ end }}
-    {{ if $rewrite }}rewrite {{ $rewrite }}{{ end }}
+    {{ if eq (len $routes) 1 }}
+    {{ $route := first $routes }}
+    {{ $name := $route.name }}
+    {{ $port := $route.port }}
+    {{ $paths := $route.paths }}
+    {{ if $route.rewrite }}rewrite {{ $route.rewrite }}{{ end }}
     {{ if $paths }}
     route {
       {{ range $index, $pair := split $paths "," }}
@@ -168,6 +188,40 @@
     {{ else }}
     reverse_proxy {{ $name }}:{{ $port }}
     {{ end }}
+    {{ else }}
+      {{ $byPath := dict }}
+      {{ range $route := $routes }}
+        {{ if not $route.paths }}
+          {{ fail (printf "Shared site %s requires caddy.N.paths on %s" $site $route.name) }}
+        {{ end }}
+        {{ range $pair := splitList "," $route.paths }}
+          {{ $parts := splitList ":" $pair }}
+          {{ if ne (len $parts) 2 }}
+            {{ fail (printf "Invalid path:port pair %q on %s" $pair $route.name) }}
+          {{ end }}
+          {{ $path := trim (index $parts 0) }}
+          {{ $pathPort := trim (index $parts 1) }}
+          {{ if not (regexMatch "^[a-zA-Z0-9_~-]+(/[a-zA-Z0-9_~-]+)*$" $path) }}
+            {{ fail (printf "Invalid path label %q for shared site %s" $path $site) }}
+          {{ end }}
+          {{ $key := lower $path }}
+          {{ if hasKey $byPath $key }}
+            {{ fail (printf "Duplicate path /%s for shared site %s" $path $site) }}
+          {{ end }}
+          {{ $_ := set $byPath $key (dict "path" $path "name" $route.name "port" $pathPort "rewrite" $route.rewrite) }}
+        {{ end }}
+      {{ end }}
+    route {
+      {{ range $index, $key := keys $byPath | sortAlpha | reverse }}
+        {{ $route := get $byPath $key }}
+        @path{{ $index }} path /{{ $route.path }} /{{ $route.path }}/*
+        handle @path{{ $index }} {
+            {{ if $route.rewrite }}rewrite {{ $route.rewrite }}{{ end }}
+            reverse_proxy {{ $route.name }}:{{ $route.port }}
+        }
+      {{ end }}
+        respond "Not Found" 404
+    }
+    {{ end }}
 }
-  {{ end }}
 {{ end }}

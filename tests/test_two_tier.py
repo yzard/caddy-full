@@ -223,6 +223,40 @@ class TwoTierTest(unittest.TestCase):
                     with conn.makefile("rb") as stream:
                         self.assertEqual(stream.read(), b"\x00bep-test\xff")
 
+    def test_shared_hostname_routes_each_path_to_its_container(self):
+        domain = "shared.caddy-full.test"
+        for name, paths in (
+            ("finance", "invoice:80"),
+            ("manager", "download_manager:80,invoice/archive:80"),
+        ):
+            config = f'server {{ listen 80; location / {{ return 200 "{name}:$request_uri"; }} }}'
+            self.start(name, [
+                "--entrypoint", "sh",
+                "--label", f"caddy.instance={self.prefix}-shared",
+                "--label", f"caddy.0.domain={domain}",
+                "--label", "caddy.0.tls=internal",
+                "--label", f"caddy.0.paths={paths}",
+            ], image="nginx:1.28-alpine", command=[
+                "-c", f"printf '%s' '{config}' > /etc/nginx/conf.d/default.conf; exec nginx -g 'daemon off;'",
+            ])
+        proxy = self.proxy("shared")
+        port = self.port(proxy, 443)
+        context = ssl._create_unverified_context()
+        for path, backend in (
+            ("/invoice", "finance"),
+            ("/invoice/login.html", "finance"),
+            ("/download_manager", "manager"),
+            ("/download_manager/api/status", "manager"),
+            ("/invoice/archive/a", "manager"),
+        ):
+            eventually(lambda: self.assertEqual(
+                self.request(port, domain, path, context)[:2], (200, f"{backend}:{path}")
+            ))
+        for path in ("/", "/invoice-other", "/login.html"):
+            self.assertEqual(self.request(port, domain, path, context)[0], 404)
+        config = docker("exec", proxy, "cat", "/etc/caddy/default.d/default.caddy")
+        self.assertEqual(config.count(domain + " {"), 1)
+
     def test_ssh_splitter_with_certificate_relay(self):
         self.certificate_relay_and_dynamic_routes(ssh_splitter=True)
 
